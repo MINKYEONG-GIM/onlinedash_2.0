@@ -433,7 +433,18 @@ def load_brand_register_avg_days(reg_bytes=None, inout_bytes=None, _cache_key=No
         retouch_dt = _parse_date_series(data.iloc[:, retouch_done_col]) if retouch_done_col is not None and retouch_done_col < data.shape[1] else pd.Series(pd.NaT, index=data.index)
         style_ok = style_series.astype(str).str.strip().replace(r"^\s*$", pd.NA, regex=True).notna()
         register_ok = reg_dt.notna()
-        total_diffs = []
+        # 평균전체등록소요일수: BASE 최초입고일 ↔ ONLINE 공홈등록일을 스타일 기준으로 매칭 후 일괄 계산
+        df_calc = pd.DataFrame({
+            "style": style_series.astype(str).map(lambda x: "".join(str(x).split())),
+            "reg_dt": reg_dt,
+        })
+        df_calc = df_calc[df_calc["reg_dt"].notna()]
+        df_calc["base_dt"] = df_calc["style"].map(base_map)
+        df_calc = df_calc[df_calc["base_dt"].notna()]
+        df_calc["diff"] = (df_calc["reg_dt"] - df_calc["base_dt"]).dt.days
+        df_calc = df_calc[df_calc["diff"] >= 0]
+        total_diffs = df_calc["diff"].tolist()
+
         photo_handover_diffs = []
         photo_diffs = []
         register_diffs = []
@@ -444,8 +455,6 @@ def load_brand_register_avg_days(reg_bytes=None, inout_bytes=None, _cache_key=No
             base_dt = base_map.get(style_norm)
             if base_dt is None or pd.isna(reg_dt.loc[idx]):
                 continue
-            total_days = (reg_dt.loc[idx] - base_dt).days
-            total_diffs.append(max(0, total_days))
             if photo_dt.notna().loc[idx] and photo_handover_col is not None:
                 d = (photo_dt.loc[idx] - base_dt).days
                 photo_handover_diffs.append(max(0, d))
