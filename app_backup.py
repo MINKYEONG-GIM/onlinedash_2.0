@@ -230,7 +230,7 @@ def load_base_inout(io_bytes=None, _cache_key=None, target_sheet_name=None):
     kw = ["브랜드", "스타일", "최초입고일", "입고", "출고", "판매"]
     best_row, best_score = None, 0
     for i in range(min(20, len(preview))):
-        row = preview.iloc[i].astype(str)
+        row = preview.iloc[i].fillna("").astype(str)
         score = sum(1 for cell in row if any(k in cell for k in kw))
         if score > best_score:
             best_score, best_row = score, i
@@ -312,7 +312,12 @@ def load_brand_register_df(io_bytes=None, _cache_key=None, target_sheet_name=Non
         out = pd.DataFrame()
         out["스타일코드"] = data.iloc[:, style_col].astype(str).str.strip()
         out["시즌"] = data.iloc[:, season_col].astype(str).str.strip() if season_col is not None and season_col < data.shape[1] else ""
-        reg_ok = pd.to_datetime(data.iloc[:, regdate_col], errors="coerce").notna()
+        reg_series = data.iloc[:, regdate_col]
+        reg_ok = (
+            reg_series.notna()
+            & (reg_series.astype(str).str.strip() != "")
+            & (reg_series.astype(str).str.strip().str.lower() != "nan")
+        )
         out["온라인상품등록여부"] = reg_ok.map({True: "등록", False: "미등록"})
         out = out[out["스타일코드"].str.len() > 0]
         out = out[out["스타일코드"] != "nan"]
@@ -937,5 +942,5 @@ st.markdown(
     "<div style='margin-top:8px; font-size:20px; color:#9ca3af;'>"
     "문의가 있으시면 CAIO실 김민경(kim_minkyeong07@eland.co.kr)로 부탁드립니다"
     "</div>",
-    unsafe_allow_html=True
+    unsafe_allow_html=True,
 )
