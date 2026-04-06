@@ -230,7 +230,7 @@ def load_base_inout(io_bytes=None, _cache_key=None, target_sheet_name=None):
     kw = ["브랜드", "스타일", "최초입고일", "입고", "출고", "판매"]
     best_row, best_score = None, 0
     for i in range(min(20, len(preview))):
-        row = preview.iloc[i].astype(str)
+        row = preview.iloc[i].fillna("").astype(str)
         score = sum(1 for cell in row if any(k in cell for k in kw))
         if score > best_score:
             best_score, best_row = score, i
