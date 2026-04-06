@@ -301,6 +301,12 @@ def _norm_season(val):
     s = s.upper()
     return s[1] if len(s) >= 2 and s[0].isalpha() else s[0]
 
+def _regdate_cell_filled(reg_series):
+    """공홈등록일 셀이 비어 있지 않으면 True. 날짜로 파싱되지 않아도 값만 있으면 등록으로 집계."""
+    m = reg_series.notna()
+    s = reg_series.astype(str).str.strip()
+    return m & (s != "") & (s.str.lower() != "nan")
+
 # ---- 브랜드 등록 시트 ----
 @st.cache_data(ttl=120)
 def load_brand_register_df(io_bytes=None, _cache_key=None, target_sheet_name=None):
@@ -333,8 +339,7 @@ def load_brand_register_df(io_bytes=None, _cache_key=None, target_sheet_name=Non
         out["스타일코드"] = data.iloc[:, style_col].astype(str).str.strip()
         out["시즌"] = data.iloc[:, season_col].astype(str).str.strip() if season_col is not None and season_col < data.shape[1] else ""
         reg_series = data.iloc[:, regdate_col]
-        reg_dt = _parse_date_series(reg_series)
-        reg_ok = reg_dt.notna()
+        reg_ok = _regdate_cell_filled(reg_series)
         out["온라인상품등록여부"] = reg_ok.map({True: "등록", False: "미등록"})
         out = out[out["스타일코드"].str.len() > 0]
         out = out[out["스타일코드"] != "nan"]
@@ -344,7 +349,7 @@ def load_brand_register_df(io_bytes=None, _cache_key=None, target_sheet_name=Non
 def count_registered_styles_from_register_sheet(
     sources, brand_name, selected_seasons, season_options
 ):
-    """공홈등록일이 있는 스타일 수(등록 시트 기준). 물류 입고 여부와 무관하게 집계."""
+    """공홈등록일 칸에 값이 있는 스타일 수(등록 시트 기준). 물류 입고 여부와 무관하게 집계."""
     if brand_name in NO_REG_SHEET_BRANDS:
         return None
     brand_key = BRAND_TO_KEY.get(brand_name)
