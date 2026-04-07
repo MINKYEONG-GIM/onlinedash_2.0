@@ -673,7 +673,7 @@ with col_head_right:
         st.markdown('<div style="font-weight:600;color:#f8fafc;">2026년</div>', unsafe_allow_html=True)
     
     with col_season:
-        seasons = ["1", "2", "A", "S", "F"]
+        seasons = ["1", "2", "A", "B", "C", "S", "F"]
         selected_seasons = st.multiselect("시즌", seasons, default=seasons, key="season_filter")
 
     with col_brand:
