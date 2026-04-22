@@ -2,7 +2,10 @@
 *.xlsx
 __pycache__/
 
-
+# Next.js
+.next/
+out/
+node_modules/
 
 # Python
 __pycache__/
@@ -14,6 +17,8 @@ venv/
 .venv/
 env/
 .env
+.env.local
+.env.*.local
 *.egg-info/
 .eggs/
 dist/

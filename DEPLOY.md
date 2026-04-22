@@ -1,22 +1,37 @@
-# 배포 가이드
+# Vercel 배포
 
-## Streamlit Cloud
+이 프로젝트는 **Next.js 14** 앱이며, 구글 스프레드시트는 **서버에서만** 읽습니다. 비밀 값은 저장소에 넣지 말고 **Vercel → Project → Settings → Environment Variables**에만 등록하세요.
 
-1. GitHub에 저장소 푸시
-2. [share.streamlit.io](https://share.streamlit.io) 접속
-3. **New app** → GitHub 저장소 선택
-4. 설정:
-   - **Main file path**: `app_deploy.py`
-   - **Branch**: `main` (또는 사용 중인 브랜치)
-5. **Deploy** 클릭
+## 1. Vercel에 연결
 
-### 참고
+1. GitHub에 저장소를 푸시합니다.
+2. [Vercel](https://vercel.com)에서 **New Project**로 해당 저장소를 import합니다.
+3. Framework Preset이 **Next.js**로 잡히는지 확인합니다.
 
-- DB 폴더의 엑셀은 Git에 포함되지 않음 → 사용자가 앱 실행 후 사이드바에서 업로드
-- `requirements.txt`가 자동으로 인식됨
-- Python 3.9+ 환경에서 실행됨
+## 2. 환경 변수
 
-## 기타 플랫폼
+| 변수 | 필수 | 설명 |
+|------|------|------|
+| `GOOGLE_SERVICE_ACCOUNT_JSON` | 예 | 서비스 계정 JSON **전문** (개행은 `\n` 이스케이프 가능) |
+| `BASE_SPREADSHEET_ID` | 예 | 입출고용 스프레드시트 ID |
+| `ONLINE_SPREADSHEET_ID` | 예 | 온라인 등록용 스프레드시트 ID |
+| `SESSION_SECRET` | 예(프로덕션) | **32자 이상** 임의 문자열 (세션 쿠키 암호화) |
+| `DASHBOARD_PASSWORD` | 아니오 | 설정 시 `/login` 비밀번호 인증 활성화 |
 
-- **Heroku**, **Railway**, **Render** 등에서도 `streamlit run app_deploy.py` 명령으로 실행 가능
-- 포트는 `8501`이 기본값이며, `--server.port` 옵션으로 변경 가능
+로컬 개발 시에는 저장소에 포함되지 않은 `.env.local` 파일을 사용하세요. `.env.example`은 **이름만** 있는 템플릿입니다.
+
+## 3. Google 쪽 권한
+
+- 서비스 계정 이메일을 두 스프레드시트(및 필요 시 링크된 파일)에 **뷰어 이상**으로 공유합니다.
+- Drive API로 xlsx export가 막히면 Sheets API fallback을 사용합니다.
+
+## 4. 빌드
+
+```bash
+npm install
+npm run build
+```
+
+## 5. 실행 시간
+
+구글에서 시트를 받아 파싱하는 데 시간이 걸릴 수 있습니다. Vercel **Pro**에서는 `src/app/page.tsx`의 `export const maxDuration = 60`이 적용됩니다. 무료 플랜 한도에 걸리면 타임아웃이 날 수 있으니 플랜 또는 데이터량을 조정하세요.
