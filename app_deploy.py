@@ -343,6 +343,8 @@ def load_brand_register_df(io_bytes=None, _cache_key=None, target_sheet_name=Non
         out["온라인상품등록여부"] = reg_ok.map({True: "등록", False: "미등록"})
         out = out[out["스타일코드"].str.len() > 0]
         out = out[out["스타일코드"] != "nan"]
+        exclude_col = _col_idx(header_vals, "제외")  # 또는 "제외 여부"
+        out["제외여부"] = data.iloc[:, exclude_col].astype(str).str.strip() if exclude_col is not None and exclude_col < data.shape[1] else ""
         return out
     return pd.DataFrame()
 
@@ -365,7 +367,10 @@ def count_registered_styles_from_register_sheet(
     )
     if df_reg.empty:
         return 0
-    d = df_reg[df_reg["온라인상품등록여부"] == "등록"].copy()
+    d = df_reg[
+        (df_reg["온라인상품등록여부"] == "등록") &
+        (df_reg["제외여부"] == "포함")
+    ].copy()
     if selected_seasons and season_options and set(selected_seasons) != set(season_options):
         d = d[_season_matches(d["시즌"], selected_seasons)]
     return int(d["스타일코드"].map(_norm).nunique())
