@@ -789,16 +789,13 @@ export function computeDashboard(
 
   let dfBase = loadBaseInout(baseBytes, "물류입고스타일수");
   if (selectedBrand) {
-    const brandFilterCol = findCol(["브랜드(Now:단품)"], dfBase.columns);
-
     dfBase = {
       ...dfBase,
       records: dfBase.records.filter(
-        (r) =>
-          String(r["브랜드"] ?? r[brandFilterCol ?? ""] ?? "").trim() ===
-          selectedBrand
+        (r) => String(r["브랜드"] ?? "").trim() === selectedBrand
       ),
     };
+  } 
   let dfKpi = dfBase;
   const seasonCol = findCol(["시즌", "season"], dfBase.columns);
   if (
