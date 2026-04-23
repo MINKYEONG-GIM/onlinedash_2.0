@@ -436,7 +436,7 @@ export function buildStyleTableAll(sources: SourceBundle): {
   const { columns, records } = base;
   if (!records.length) return [];
   const styleCol = findCol(["스타일코드", "스타일"], columns);
-  const brandCol = findCol(["브랜드", "브랜드(Now:단품)"], columns);
+  const brandCol = findCol(["브랜드(Now:단품)"], columns);
   const seasonCol = findCol(["시즌", "season"], columns);
   const firstInCol = findCol(["최초입고일", "입고일"], columns);
   const outAmtCol = findCol(["출고액"], columns);
@@ -456,7 +456,7 @@ export function buildStyleTableAll(sources: SourceBundle): {
   for (const r of records) {
     const style = String(r[styleCol] ?? "").trim();
     if (!style) continue;
-    const brand = String(r[brandCol] ?? "").trim();
+    const brand = String(r["브랜드"] ?? r[brandCol] ?? "").trim();
     const season = seasonCol ? r[seasonCol] : "";
     let inDateOk = false;
     if (firstInCol && firstInCol in r) {
@@ -585,7 +585,7 @@ export function buildInoutAggregates(ioBytes: Buffer | null): {
     };
   }
   const styleCol = findCol(["스타일코드", "스타일"], columns);
-  const brandCol = findCol(["브랜드", "브랜드(Now:단품)"], columns);
+  const brandCol = findCol(["브랜드(Now:단품)"], columns);
   if (!styleCol || !brandCol) {
     return {
       rows: [],
@@ -615,7 +615,7 @@ export function buildInoutAggregates(ioBytes: Buffer | null): {
   for (const r of records) {
     const style = String(r[styleCol] ?? "").trim();
     if (!style) continue;
-    const brand = String(r[brandCol] ?? "").trim();
+    const brand = String(r["브랜드"] ?? r[brandCol] ?? "").trim();
     const season = seasonCol ? String(r[seasonCol] ?? "").trim() : "";
     let inDateOk = false;
     if (firstInCol && firstInCol in r) {
@@ -789,20 +789,16 @@ export function computeDashboard(
 
   let dfBase = loadBaseInout(baseBytes, "물류입고스타일수");
   if (selectedBrand) {
-    const brandFilterCol = findCol(
-      ["브랜드", "브랜드(Now:단품)"],
-      dfBase.columns
-    );
-  
-    if (brandFilterCol) {
-      dfBase = {
-        ...dfBase,
-        records: dfBase.records.filter(
-          (r) => String(r[brandFilterCol] ?? "").trim() === selectedBrand
-        ),
-      };
-    }
-  }
+    const brandFilterCol = findCol(["브랜드(Now:단품)"], dfBase.columns);
+
+    dfBase = {
+      ...dfBase,
+      records: dfBase.records.filter(
+        (r) =>
+          String(r["브랜드"] ?? r[brandFilterCol ?? ""] ?? "").trim() ===
+          selectedBrand
+      ),
+    };
   let dfKpi = dfBase;
   const seasonCol = findCol(["시즌", "season"], dfBase.columns);
   if (
