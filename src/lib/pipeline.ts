@@ -281,7 +281,9 @@ export function countRegisteredStylesFromRegisterSheet(
   const dfReg = loadBrandRegisterDf(regBytes, sheet);
   if (!dfReg.length) return 0;
   let d = dfReg.filter(
-    (x) => x.온라인상품등록여부 === "등록" && x.제외여부 === "포함"
+    (x) =>
+      x.온라인상품등록여부 === "등록" &&
+      (x.제외여부 ?? "").trim() === "포함"
   );
   if (
     selectedSeasons.length &&
@@ -574,7 +576,7 @@ export function buildInoutAggregates(ioBytes: Buffer | null): {
     판매액: number;
   }[];
 } {
-  const { columns, records } = loadBaseInout(ioBytes, null);
+  const { columns, records } = loadBaseInout(ioBytes, "물류입고스타일수");
   if (!records.length) {
     return {
       rows: [],
@@ -785,7 +787,7 @@ export function computeDashboard(
   const { rows: inoutRows, agg: inoutAgg, brandSeasonRows } =
     buildInoutAggregates(baseBytes);
 
-  let dfBase = loadBaseInout(baseBytes, null);
+  let dfBase = loadBaseInout(baseBytes, "물류입고스타일수");
   if (selectedBrand) {
     dfBase = {
       ...dfBase,
