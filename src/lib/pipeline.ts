@@ -789,19 +789,19 @@ export function computeDashboard(
 
   let dfBase = loadBaseInout(baseBytes, "물류입고스타일수");
   if (selectedBrand) {
-    dfBase = {
-      ...dfBase,
-      const brandFilterCol = findCol(["브랜드", "브랜드(Now:단품)"], dfBase.columns);
-
-      if (selectedBrand && brandFilterCol) {
-        dfBase = {
-          ...dfBase,
-          records: dfBase.records.filter(
-            (r) => String(r[brandFilterCol] ?? "").trim() === selectedBrand
-          ),
-        };
-      }
-    };
+    const brandFilterCol = findCol(
+      ["브랜드", "브랜드(Now:단품)"],
+      dfBase.columns
+    );
+  
+    if (brandFilterCol) {
+      dfBase = {
+        ...dfBase,
+        records: dfBase.records.filter(
+          (r) => String(r[brandFilterCol] ?? "").trim() === selectedBrand
+        ),
+      };
+    }
   }
   let dfKpi = dfBase;
   const seasonCol = findCol(["시즌", "season"], dfBase.columns);
