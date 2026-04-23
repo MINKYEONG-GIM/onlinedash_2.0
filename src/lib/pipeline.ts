@@ -436,7 +436,7 @@ export function buildStyleTableAll(sources: SourceBundle): {
   const { columns, records } = base;
   if (!records.length) return [];
   const styleCol = findCol(["스타일코드", "스타일"], columns);
-  const brandCol = columns.includes("브랜드") ? "브랜드" : null;
+  const brandCol = findCol(["브랜드", "브랜드(Now:단품)"], columns);
   const seasonCol = findCol(["시즌", "season"], columns);
   const firstInCol = findCol(["최초입고일", "입고일"], columns);
   const outAmtCol = findCol(["출고액"], columns);
@@ -585,7 +585,7 @@ export function buildInoutAggregates(ioBytes: Buffer | null): {
     };
   }
   const styleCol = findCol(["스타일코드", "스타일"], columns);
-  const brandCol = columns.includes("브랜드") ? "브랜드" : null;
+  const brandCol = findCol(["브랜드", "브랜드(Now:단품)"], columns);
   if (!styleCol || !brandCol) {
     return {
       rows: [],
@@ -791,9 +791,16 @@ export function computeDashboard(
   if (selectedBrand) {
     dfBase = {
       ...dfBase,
-      records: dfBase.records.filter(
-        (r) => String(r["브랜드"] ?? "").trim() === selectedBrand
-      ),
+      const brandFilterCol = findCol(["브랜드", "브랜드(Now:단품)"], dfBase.columns);
+
+      if (selectedBrand && brandFilterCol) {
+        dfBase = {
+          ...dfBase,
+          records: dfBase.records.filter(
+            (r) => String(r[brandFilterCol] ?? "").trim() === selectedBrand
+          ),
+        };
+      }
     };
   }
   let dfKpi = dfBase;
