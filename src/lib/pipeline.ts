@@ -386,6 +386,20 @@ function parseDateSeriesVal(v: unknown): Date | null {
   return parseCellDate(v);
 }
 
+function diffCalendarDays(start: Date, end: Date): number {
+  const startUtc = Date.UTC(
+    start.getUTCFullYear(),
+    start.getUTCMonth(),
+    start.getUTCDate()
+  );
+  const endUtc = Date.UTC(
+    end.getUTCFullYear(),
+    end.getUTCMonth(),
+    end.getUTCDate()
+  );
+  return Math.floor((endUtc - startUtc) / 86400000);
+}
+
 export function loadBrandRegisterAvgDays(
   regRows: unknown[][],
   baseDefaultRows: unknown[][],
@@ -420,39 +434,48 @@ export function loadBrandRegisterAvgDays(
   }
   if (!rows.length) return null;
 
+  const parsedRows = rows.map((line) => ({
+    style: norm(line?.[styleCol]),
+    regDt: parseDateSeriesVal(line?.[regdateCol]),
+    photoDt:
+      photoHandoverCol !== null ? parseDateSeriesVal(line?.[photoHandoverCol]) : null,
+    retouchDt:
+      retouchDoneCol !== null ? parseDateSeriesVal(line?.[retouchDoneCol]) : null,
+  }));
+
   const totalDiffs: number[] = [];
   const photoHandoverDiffs: number[] = [];
   const photoDiffs: number[] = [];
   const registerDiffs: number[] = [];
 
-  for (const line of rows) {
-    const style = norm(line?.[styleCol]);
-    const regDt = parseDateSeriesVal(line?.[regdateCol]);
+  for (const row of parsedRows) {
+    const { style, regDt } = row;
     if (!style || !regDt) continue;
 
     const baseDt = baseMap.get(style);
     if (!baseDt) continue;
 
-    const totalDiff = Math.floor(
-      (regDt.getTime() - baseDt.getTime()) / 86400000
-    );
+    const totalDiff = diffCalendarDays(baseDt, regDt);
     if (totalDiff >= 0) totalDiffs.push(totalDiff);
+  }
 
-    const photoDt =
-      photoHandoverCol !== null ? parseDateSeriesVal(line?.[photoHandoverCol]) : null;
-    const retouchDt =
-      retouchDoneCol !== null ? parseDateSeriesVal(line?.[retouchDoneCol]) : null;
+  for (const row of parsedRows) {
+    const { style, regDt, photoDt, retouchDt } = row;
+    if (!style || !regDt) continue;
 
-    if (photoDt) {
-      const d = Math.floor((photoDt.getTime() - baseDt.getTime()) / 86400000);
+    const baseDt = baseMap.get(style);
+    if (!baseDt) continue;
+
+    if (photoDt && photoHandoverCol !== null) {
+      const d = diffCalendarDays(baseDt, photoDt);
       photoHandoverDiffs.push(Math.max(0, d));
     }
-    if (retouchDt && photoDt) {
-      const d = Math.floor((retouchDt.getTime() - photoDt.getTime()) / 86400000);
+    if (retouchDt && photoDt && retouchDoneCol !== null) {
+      const d = diffCalendarDays(photoDt, retouchDt);
       photoDiffs.push(Math.max(0, d));
     }
-    if (retouchDt) {
-      const d = Math.floor((regDt.getTime() - retouchDt.getTime()) / 86400000);
+    if (retouchDt && retouchDoneCol !== null) {
+      const d = diffCalendarDays(retouchDt, regDt);
       registerDiffs.push(Math.max(0, d));
     }
   }
