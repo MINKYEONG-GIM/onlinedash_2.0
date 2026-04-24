@@ -42,6 +42,15 @@ const RAW_BRAND_CODE_TO_NAME: Record<string, string> = {
   EB: "에블린",
 };
 
+const SALE_AMOUNT_HEADERS = [
+  "누적 판매액[외형매출]",
+  "누적판매액[외형매출]",
+  "누적 판매액(외형매출)",
+  "누적판매액(외형매출)",
+  "누적판매액",
+  "판매액",
+] as const;
+
 const baseTableCache = new WeakMap<unknown[][], BaseTable>();
 const registerDfCache = new WeakMap<unknown[][], RegisterRow[]>();
 const registerContextCache = new WeakMap<unknown[][], RegisterContext | null>();
@@ -74,6 +83,10 @@ function findColNormalized(keys: string[], cols: string[]): string | null {
     }
   }
   return findCol(keys, cols);
+}
+
+function findSaleAmountCol(cols: string[]): string | null {
+  return findColNormalized([...SALE_AMOUNT_HEADERS], cols);
 }
 
 function aoaToObjects(
@@ -595,10 +608,7 @@ export function buildInoutAggregates(inoutRowsSource: unknown[][]): {
   const orderAmtCol = findCol(["발주액"], base.columns);
   const inAmtCol = findCol(["누적입고액", "입고액"], base.columns);
   const outAmtCol = findCol(["출고액"], base.columns);
-  const saleAmtCol = findColNormalized(
-    ["누적 판매액[외형매출]", "누적판매액", "판매액"],
-    base.columns
-  );
+  const saleAmtCol = findSaleAmountCol(base.columns);
   const firstInCol = findCol(["최초입고일", "입고일"], base.columns);
   const inQtyCol = findCol(["입고량"], base.columns);
   const seasonCol = findCol(["시즌", "season"], base.columns);
@@ -801,6 +811,30 @@ export function computeDashboard(
     brandSeasonRows,
   } = buildInoutAggregates(inoutRowsSource);
 
+  let saleBase = loadBaseTable(inoutRowsSource);
+  if (selectedBrand) {
+    saleBase = {
+      ...saleBase,
+      records: saleBase.records.filter(
+        (record) => String(record["브랜드"] ?? "").trim() === selectedBrand
+      ),
+    };
+  }
+  const saleSeasonCol = findCol(["시즌", "season"], saleBase.columns);
+  if (
+    selectedSeasons.length &&
+    new Set(selectedSeasons).size !== new Set(seasons).size &&
+    saleSeasonCol &&
+    saleBase.columns.includes(saleSeasonCol)
+  ) {
+    saleBase = {
+      ...saleBase,
+      records: saleBase.records.filter((record) =>
+        seasonMatchesCell(record[saleSeasonCol], selectedSeasons)
+      ),
+    };
+  }
+
   let base = loadBaseTable(sources.baseDefaultRows);
   if (selectedBrand) {
     base = {
@@ -829,13 +863,11 @@ export function computeDashboard(
 
   const inAmtCol = findCol(["누적입고액", "입고액"], kpiBase.columns);
   const outAmtCol = findCol(["출고액"], kpiBase.columns);
-  const saleAmtCol = findColNormalized(
-    ["누적 판매액[외형매출]", "누적판매액", "판매액"],
-    kpiBase.columns
-  );
+  const saleAmtCol = findSaleAmountCol(saleBase.columns);
   const firstInCol = findCol(["최초입고일", "입고일"], kpiBase.columns);
   const inQtyCol = findCol(["입고량"], kpiBase.columns);
-  const styleCol = findCol(["스타일코드", "스타일"], kpiBase.columns);
+  const styleCol = findCol(["스타일코드", "스타일"], saleBase.columns);
+  const kpiStyleCol = findCol(["스타일코드", "스타일"], kpiBase.columns);
 
   let totalInAmt = 0;
   let totalOutAmt = 0;
@@ -843,20 +875,31 @@ export function computeDashboard(
   for (const record of kpiBase.records) {
     if (inAmtCol) totalInAmt += toNum(record[inAmtCol]) ?? 0;
     if (outAmtCol) totalOutAmt += toNum(record[outAmtCol]) ?? 0;
+  }
+  for (const record of saleBase.records) {
     if (saleAmtCol) totalSaleAmt += toNum(record[saleAmtCol]) ?? 0;
   }
 
   let totalInSty = 0;
   let totalOutSty = 0;
   let totalSaleSty = 0;
-  if (kpiBase.records.length && styleCol && kpiBase.columns.includes(styleCol)) {
-    const stylesIn = new Set<string>();
-    const stylesOut = new Set<string>();
+  if (saleBase.records.length && styleCol && saleBase.columns.includes(styleCol)) {
     const stylesSale = new Set<string>();
-    for (const record of kpiBase.records) {
+    for (const record of saleBase.records) {
       const style = String(record[styleCol] ?? "").trim();
       if (!style) continue;
-
+      const saleFlag =
+        saleAmtCol && saleAmtCol in record ? (toNum(record[saleAmtCol]) ?? 0) > 0 : false;
+      if (saleFlag) stylesSale.add(style);
+    }
+    totalSaleSty = stylesSale.size;
+  }
+  if (kpiBase.records.length && kpiStyleCol && kpiBase.columns.includes(kpiStyleCol)) {
+    const stylesIn = new Set<string>();
+    const stylesOut = new Set<string>();
+    for (const record of kpiBase.records) {
+      const style = String(record[kpiStyleCol] ?? "").trim();
+      if (!style) continue;
       let inDateOk = false;
       if (firstInCol && firstInCol in record) {
         inDateOk = parseCellDate(record[firstInCol]) !== null;
@@ -870,16 +913,11 @@ export function computeDashboard(
       const inFlag = inDateOk || hasQty || hasAmt;
       const outFlag =
         outAmtCol && outAmtCol in record ? (toNum(record[outAmtCol]) ?? 0) > 0 : false;
-      const saleFlag =
-        saleAmtCol && saleAmtCol in record ? (toNum(record[saleAmtCol]) ?? 0) > 0 : false;
-
       if (inFlag) stylesIn.add(style);
       if (outFlag) stylesOut.add(style);
-      if (saleFlag) stylesSale.add(style);
     }
     totalInSty = stylesIn.size;
     totalOutSty = stylesOut.size;
-    totalSaleSty = stylesSale.size;
   } else if (selectedBrand) {
     totalInSty = inoutAgg.brandInQty[selectedBrand] ?? 0;
     totalOutSty = inoutAgg.brandOutQty[selectedBrand] ?? 0;
