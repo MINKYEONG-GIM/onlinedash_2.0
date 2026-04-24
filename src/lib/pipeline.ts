@@ -965,11 +965,6 @@ export function computeDashboard(
     set.add(r.스타일코드);
     inByBrand.set(r.브랜드, set);
   }
-  const seasonTuple =
-    selectedSeasons.length &&
-    new Set(selectedSeasons).size !== new Set(seasons).size
-      ? selectedSeasons
-      : null;
   const monitor: MonitorRow[] = allBrands.map((brand) => {
     const noReg = NO_REG_SHEET_BRANDS.has(brand);
     const 물류 = (inByBrand.get(brand)?.size ?? 0) || 0;
@@ -996,29 +991,6 @@ export function computeDashboard(
       noReg,
     };
   });
-  for (const row of monitor) {
-    if (row.noReg || !BRAND_TO_KEY[row.브랜드]) continue;
-    const key = BRAND_TO_KEY[row.브랜드];
-    const regBytes = sources.onlineByBrand[key];
-    if (!regBytes) continue;
-    const avg = loadBrandRegisterAvgDays(
-      regBytes,
-      baseBytes,
-      seasonTuple,
-      BRAND_KEY_TO_SHEET_NAME[key]
-    );
-    if (!avg) continue;
-    const setIf = (k: keyof typeof avg, col: keyof MonitorRow) => {
-      const v = avg[k];
-      if (v !== null && v !== undefined) {
-        (row as Record<string, unknown>)[col as string] = v.toFixed(1);
-      }
-    };
-    setIf("평균전체등록소요일수", "평균전체등록소요일수");
-    setIf("포토인계소요일수", "포토인계소요일수");
-    setIf("포토소요일수", "포토소요일수");
-    setIf("상품등록소요일수", "상품등록소요일수");
-  }
   monitor.sort((a, b) => b.물류입고스타일수 - a.물류입고스타일수);
 
   const brandSeasonByBrand: Record<string, InoutRow[]> = {};
