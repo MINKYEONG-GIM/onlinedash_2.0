@@ -529,7 +529,7 @@ export function buildStyleTableAll(sources: SourceBundle): {
 
 export type InoutRow = Record<string, string>;
 
-export function buildInoutAggregates(baseDefaultRows: unknown[][]): {
+export function buildInoutAggregates(inoutRowsSource: unknown[][]): {
   rows: InoutRow[];
   agg: {
     brandInQty: Record<string, number>;
@@ -549,7 +549,7 @@ export function buildInoutAggregates(baseDefaultRows: unknown[][]): {
     판매액: number;
   }[];
 } {
-  const base = loadBaseTable(baseDefaultRows);
+  const base = loadBaseTable(inoutRowsSource);
   if (!base.records.length) {
     return {
       rows: [],
@@ -572,7 +572,10 @@ export function buildInoutAggregates(baseDefaultRows: unknown[][]): {
   const orderAmtCol = findCol(["발주액"], base.columns);
   const inAmtCol = findCol(["누적입고액", "입고액"], base.columns);
   const outAmtCol = findCol(["출고액"], base.columns);
-  const saleAmtCol = findCol(["누적판매액", "판매액"], base.columns);
+  const saleAmtCol = findCol(
+    ["누적 판매액[외형매출]", "누적판매액", "판매액"],
+    base.columns
+  );
   const firstInCol = findCol(["최초입고일", "입고일"], base.columns);
   const inQtyCol = findCol(["입고량"], base.columns);
   const seasonCol = findCol(["시즌", "season"], base.columns);
@@ -767,11 +770,13 @@ export function computeDashboard(
   const seasons = SEASON_OPTIONS;
 
   const dfStyleAll = buildStyleTableAll(sources);
+  const inoutRowsSource =
+    sources.baseInoutRows.length > 0 ? sources.baseInoutRows : sources.baseDefaultRows;
   const {
     rows: inoutRows,
     agg: inoutAgg,
     brandSeasonRows,
-  } = buildInoutAggregates(sources.baseDefaultRows);
+  } = buildInoutAggregates(inoutRowsSource);
 
   let base = loadBaseTable(sources.baseDefaultRows);
   if (selectedBrand) {
