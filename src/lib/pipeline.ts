@@ -85,20 +85,36 @@ function findColNormalized(keys: string[], cols: string[]): string | null {
   return findCol(keys, cols);
 }
 
-function findSaleAmountCol(cols: string[]): string | null {
-  for (const col of cols) {
+function findSaleAmountCol(
+  cols: string[],
+  records: Record<string, unknown>[]
+): string | null {
+  const candidates = cols.filter((col) => {
     const normalized = norm(col);
-    if (normalized.includes("누적판매액") && normalized.includes("외형매출")) {
-      return col;
+    return normalized.includes("판매액") && !normalized.includes("판매량");
+  });
+
+  if (!candidates.length) {
+    return findColNormalized([...SALE_AMOUNT_HEADERS], cols);
+  }
+
+  let bestCol: string | null = null;
+  let bestScore = -1;
+  for (const col of candidates) {
+    const normalized = norm(col);
+    const bonus =
+      normalized.includes("누적판매액") && normalized.includes("외형매출")
+        ? 1e15
+        : 0;
+    const total = records.reduce((sum, record) => sum + (toNum(record[col]) ?? 0), 0);
+    const score = bonus + total;
+    if (score > bestScore) {
+      bestScore = score;
+      bestCol = col;
     }
   }
-  for (const col of cols) {
-    const normalized = norm(col);
-    if (normalized.includes("판매액") && !normalized.includes("판매량")) {
-      return col;
-    }
-  }
-  return findColNormalized([...SALE_AMOUNT_HEADERS], cols);
+
+  return bestCol;
 }
 
 function aoaToObjects(
@@ -620,7 +636,7 @@ export function buildInoutAggregates(inoutRowsSource: unknown[][]): {
   const orderAmtCol = findCol(["발주액"], base.columns);
   const inAmtCol = findCol(["누적입고액", "입고액"], base.columns);
   const outAmtCol = findCol(["출고액"], base.columns);
-  const saleAmtCol = findSaleAmountCol(base.columns);
+  const saleAmtCol = findSaleAmountCol(base.columns, base.records);
   const firstInCol = findCol(["최초입고일", "입고일"], base.columns);
   const inQtyCol = findCol(["입고량"], base.columns);
   const seasonCol = findCol(["시즌", "season"], base.columns);
@@ -875,7 +891,7 @@ export function computeDashboard(
 
   const inAmtCol = findCol(["누적입고액", "입고액"], kpiBase.columns);
   const outAmtCol = findCol(["출고액"], kpiBase.columns);
-  const saleAmtCol = findSaleAmountCol(saleBase.columns);
+  const saleAmtCol = findSaleAmountCol(saleBase.columns, saleBase.records);
   const firstInCol = findCol(["최초입고일", "입고일"], kpiBase.columns);
   const inQtyCol = findCol(["입고량"], kpiBase.columns);
   const styleCol = findCol(["스타일코드", "스타일"], saleBase.columns);
