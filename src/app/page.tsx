@@ -2,8 +2,7 @@ import { getIronSession } from "iron-session";
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import { ALL_BRANDS_VALUE, SEASON_OPTIONS } from "@/lib/constants";
-import { getAllSources } from "@/lib/google";
-import { computeDashboard } from "@/lib/pipeline";
+import { getDashboardData } from "@/lib/dashboard";
 import { getSessionOptions, type SessionData } from "@/lib/session";
 import { DashboardLayout } from "@/components/DashboardLayout";
 
@@ -27,12 +26,14 @@ export default async function Home({
   searchParams: Record<string, string | string[] | undefined>;
 }) {
   const needAuth = !!process.env.DASHBOARD_PASSWORD?.trim();
-  const session = await getIronSession<SessionData>(
-    cookies(),
-    getSessionOptions()
-  );
-  if (needAuth && !session.loggedIn) {
-    redirect("/login");
+  if (needAuth) {
+    const session = await getIronSession<SessionData>(
+      cookies(),
+      getSessionOptions()
+    );
+    if (!session.loggedIn) {
+      redirect("/login");
+    }
   }
 
   const baseId = process.env.BASE_SPREADSHEET_ID?.trim() ?? "";
@@ -59,11 +60,12 @@ export default async function Home({
       : ALL_BRANDS_VALUE;
 
   try {
-    const sources = await getAllSources(baseId, onlineId);
-    const data = computeDashboard(sources, {
+    const data = await getDashboardData(
+      baseId,
+      onlineId,
       selectedSeasons,
-      selectedBrand: selectedBrand === ALL_BRANDS_VALUE ? null : selectedBrand,
-    });
+      selectedBrand === ALL_BRANDS_VALUE ? null : selectedBrand
+    );
     return (
       <DashboardLayout
         data={data}

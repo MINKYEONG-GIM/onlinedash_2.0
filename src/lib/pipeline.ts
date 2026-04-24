@@ -16,6 +16,23 @@ export type DashboardFilters = {
 
 const workbookCache = new WeakMap<Buffer, XLSX.WorkBook | null>();
 const sheetRowsCache = new WeakMap<XLSX.WorkBook, Map<string, unknown[][]>>();
+const baseInoutCache = new WeakMap<
+  Buffer,
+  Map<string, { columns: string[]; records: Record<string, unknown>[] }>
+>();
+const registerDfCache = new WeakMap<
+  Buffer,
+  Map<
+    string,
+    {
+      스타일코드: string;
+      시즌: string;
+      온라인상품등록여부: string;
+      제외여부: string;
+    }[]
+  >
+>();
+const baseStyleFirstInCache = new WeakMap<Buffer, Map<string, Date>>();
 
 function norm(v: unknown): string {
   if (v === null || v === undefined) return "";
@@ -90,6 +107,11 @@ function loadBaseInout(
   ioBytes: Buffer | null,
   targetSheetName?: string | null
 ): { columns: string[]; records: Record<string, unknown>[] } {
+  if (ioBytes) {
+    const cacheKey = targetSheetName ?? "__AUTO__";
+    const cached = baseInoutCache.get(ioBytes)?.get(cacheKey);
+    if (cached) return cached;
+  }
   const wb = readWorkbook(ioBytes);
   if (!wb) return { columns: [], records: [] };
   let sheetName: string | undefined;
@@ -123,7 +145,14 @@ function loadBaseInout(
       if (brand) r["브랜드"] = brand;
     }
   }
-  return { columns, records };
+  const result = { columns, records };
+  if (ioBytes) {
+    const cacheKey = targetSheetName ?? "__AUTO__";
+    const cache = baseInoutCache.get(ioBytes) ?? new Map();
+    cache.set(cacheKey, result);
+    baseInoutCache.set(ioBytes, cache);
+  }
+  return result;
 }
 
 function toNum(v: unknown): number | null {
@@ -195,6 +224,11 @@ function loadBrandRegisterDf(
   온라인상품등록여부: string;
   제외여부: string;
 }[] {
+  if (ioBytes) {
+    const cacheKey = targetSheetName ?? "__ALL__";
+    const cached = registerDfCache.get(ioBytes)?.get(cacheKey);
+    if (cached) return cached;
+  }
   const wb = readWorkbook(ioBytes);
   if (!wb) return [];
   const names = targetSheetName
@@ -240,6 +274,12 @@ function loadBrandRegisterDf(
         제외여부: ex,
       });
     }
+    if (ioBytes) {
+      const cacheKey = targetSheetName ?? "__ALL__";
+      const cache = registerDfCache.get(ioBytes) ?? new Map();
+      cache.set(cacheKey, out);
+      registerDfCache.set(ioBytes, cache);
+    }
     return out;
   }
   return [];
@@ -264,6 +304,10 @@ export function seasonMatchesCell(seasonVal: unknown, selected: string[]): boole
 }
 
 function baseStyleToFirstInMap(ioBytes: Buffer | null): Map<string, Date> {
+  if (ioBytes) {
+    const cached = baseStyleFirstInCache.get(ioBytes);
+    if (cached) return cached;
+  }
   const { columns, records } = loadBaseInout(ioBytes, null);
   const styleCol = findCol(["스타일코드", "스타일"], columns);
   const firstCol = findCol(["최초입고일", "입고일"], columns);
@@ -276,6 +320,9 @@ function baseStyleToFirstInMap(ioBytes: Buffer | null): Map<string, Date> {
     if (!dt) continue;
     const prev = map.get(st);
     if (!prev || dt < prev) map.set(st, dt);
+  }
+  if (ioBytes) {
+    baseStyleFirstInCache.set(ioBytes, map);
   }
   return map;
 }

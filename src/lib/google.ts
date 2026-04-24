@@ -113,10 +113,12 @@ export async function getAllSources(
   baseSpreadsheetId: string,
   onlineSpreadsheetId: string
 ): Promise<SourceBundle> {
-  const inout = await getCachedSpreadsheetXlsxBytes(baseSpreadsheetId);
-  const onlineBytes = onlineSpreadsheetId
-    ? await getCachedSpreadsheetXlsxBytes(onlineSpreadsheetId)
-    : null;
+  const [inout, onlineBytes] = await Promise.all([
+    getCachedSpreadsheetXlsxBytes(baseSpreadsheetId),
+    onlineSpreadsheetId
+      ? getCachedSpreadsheetXlsxBytes(onlineSpreadsheetId)
+      : Promise.resolve(null),
+  ]);
   const onlineByBrand: Record<string, Buffer | null> = {};
   for (const key of Object.keys(BRAND_KEY_TO_SHEET_NAME)) {
     onlineByBrand[key] = onlineBytes;
