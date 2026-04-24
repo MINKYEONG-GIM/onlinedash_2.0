@@ -1,4 +1,3 @@
-import * as XLSX from "xlsx";
 import type { SourceBundle } from "./google";
 import {
   BRAND_KEY_TO_SHEET_NAME,
@@ -14,25 +13,27 @@ export type DashboardFilters = {
   selectedBrand: string | null;
 };
 
-const workbookCache = new WeakMap<Buffer, XLSX.WorkBook | null>();
-const sheetRowsCache = new WeakMap<XLSX.WorkBook, Map<string, unknown[][]>>();
-const baseInoutCache = new WeakMap<
-  Buffer,
-  Map<string, { columns: string[]; records: Record<string, unknown>[] }>
->();
-const registerDfCache = new WeakMap<
-  Buffer,
-  Map<
-    string,
-    {
-      스타일코드: string;
-      시즌: string;
-      온라인상품등록여부: string;
-      제외여부: string;
-    }[]
-  >
->();
-const baseStyleFirstInCache = new WeakMap<Buffer, Map<string, Date>>();
+type BaseTable = {
+  columns: string[];
+  records: Record<string, unknown>[];
+};
+
+type RegisterRow = {
+  스타일코드: string;
+  시즌: string;
+  온라인상품등록여부: string;
+  제외여부: string;
+};
+
+type RegisterContext = {
+  headerNorm: string[];
+  dataRows: unknown[][];
+};
+
+const baseTableCache = new WeakMap<unknown[][], BaseTable>();
+const registerDfCache = new WeakMap<unknown[][], RegisterRow[]>();
+const registerContextCache = new WeakMap<unknown[][], RegisterContext | null>();
+const baseStyleFirstInCache = new WeakMap<unknown[][], Map<string, Date>>();
 
 function norm(v: unknown): string {
   if (v === null || v === undefined) return "";
@@ -51,36 +52,6 @@ function findCol(keys: string[], cols: string[]): string | null {
     }
   }
   return null;
-}
-
-function readWorkbook(buf: Buffer | null): XLSX.WorkBook | null {
-  if (!buf || buf.length === 0) return null;
-  const cached = workbookCache.get(buf);
-  if (cached !== undefined) return cached;
-  try {
-    const wb = XLSX.read(buf, { type: "buffer", cellDates: true });
-    workbookCache.set(buf, wb);
-    return wb;
-  } catch {
-    workbookCache.set(buf, null);
-    return null;
-  }
-}
-
-function sheetToAoa(wb: XLSX.WorkBook, sheetName: string): unknown[][] {
-  const cache = sheetRowsCache.get(wb) ?? new Map<string, unknown[][]>();
-  sheetRowsCache.set(wb, cache);
-  const cached = cache.get(sheetName);
-  if (cached) return cached;
-  const ws = wb.Sheets[sheetName];
-  if (!ws) return [];
-  const rows = XLSX.utils.sheet_to_json(ws, {
-    header: 1,
-    defval: null,
-    raw: false,
-  }) as unknown[][];
-  cache.set(sheetName, rows);
-  return rows;
 }
 
 function aoaToObjects(
@@ -103,55 +74,51 @@ function aoaToObjects(
   return { columns: header, records };
 }
 
-function loadBaseInout(
-  ioBytes: Buffer | null,
-  targetSheetName?: string | null
-): { columns: string[]; records: Record<string, unknown>[] } {
-  if (ioBytes) {
-    const cacheKey = targetSheetName ?? "__AUTO__";
-    const cached = baseInoutCache.get(ioBytes)?.get(cacheKey);
-    if (cached) return cached;
+function loadBaseTable(rows: unknown[][]): BaseTable {
+  const cached = baseTableCache.get(rows);
+  if (cached) return cached;
+
+  if (!rows.length) {
+    const empty = { columns: [], records: [] };
+    baseTableCache.set(rows, empty);
+    return empty;
   }
-  const wb = readWorkbook(ioBytes);
-  if (!wb) return { columns: [], records: [] };
-  let sheetName: string | undefined;
-  if (targetSheetName && wb.SheetNames.includes(targetSheetName)) {
-    sheetName = targetSheetName;
-  } else {
-    const candidates = wb.SheetNames.filter((s) => !String(s).startsWith("_"));
-    sheetName = candidates[0] ?? wb.SheetNames[wb.SheetNames.length - 1];
-  }
-  if (!sheetName) return { columns: [], records: [] };
-  const preview = sheetToAoa(wb, sheetName);
+
   const kw = ["브랜드", "스타일", "최초입고일", "입고", "출고", "판매"];
   let bestRow: number | null = null;
   let bestScore = 0;
-  for (let i = 0; i < Math.min(20, preview.length); i++) {
-    const row = (preview[i] ?? []).map((c) => String(c ?? ""));
+  for (let i = 0; i < Math.min(20, rows.length); i++) {
+    const row = (rows[i] ?? []).map((c) => String(c ?? ""));
     const score = row.filter((cell) => kw.some((k) => cell.includes(k))).length;
     if (score > bestScore) {
       bestScore = score;
       bestRow = i;
     }
   }
-  const headerRow =
-    bestRow !== null && bestScore > 0 ? bestRow : 0;
-  const { columns, records } = aoaToObjects(preview, headerRow);
+
+  const { columns, records } = aoaToObjects(
+    rows,
+    bestRow !== null && bestScore > 0 ? bestRow : 0
+  );
   const styleCol = findCol(["스타일코드", "스타일"], columns);
-  if (styleCol && columns.includes(styleCol)) {
-    for (const r of records) {
-      const v = String(r[styleCol] ?? "").trim().toLowerCase().slice(0, 2);
-      const brand = STYLE_PREFIX_TO_BRAND[v];
-      if (brand) r["브랜드"] = brand;
+  const rawBrandCol = findCol(["브랜드(Now:단품)", "브랜드"], columns);
+  if (styleCol) {
+    for (const record of records) {
+      const style = String(record[styleCol] ?? "")
+        .trim()
+        .toLowerCase()
+        .slice(0, 2);
+      const mappedBrand = STYLE_PREFIX_TO_BRAND[style];
+      if (mappedBrand) {
+        record["브랜드"] = mappedBrand;
+      } else if (!record["브랜드"] && rawBrandCol) {
+        record["브랜드"] = record[rawBrandCol] ?? "";
+      }
     }
   }
+
   const result = { columns, records };
-  if (ioBytes) {
-    const cacheKey = targetSheetName ?? "__AUTO__";
-    const cache = baseInoutCache.get(ioBytes) ?? new Map();
-    cache.set(cacheKey, result);
-    baseInoutCache.set(ioBytes, cache);
-  }
+  baseTableCache.set(rows, result);
   return result;
 }
 
@@ -181,15 +148,33 @@ function colIdx(headerVals: string[], key: string): number | null {
 }
 
 function findRegisterHeader(
-  dfRaw: unknown[][]
+  rows: unknown[][]
 ): { row: number; norm: string[] } | null {
-  for (let i = 0; i < Math.min(30, dfRaw.length); i++) {
-    const row = (dfRaw[i] ?? []).map((c) => norm(c));
+  for (let i = 0; i < Math.min(30, rows.length); i++) {
+    const row = (rows[i] ?? []).map((c) => norm(c));
     const hasStyle = row.some((v) => v.includes("스타일코드") || v.includes("스타일"));
     const hasReg = row.some((v) => v.includes("공홈등록일"));
     if (hasStyle && hasReg) return { row: i, norm: row };
   }
   return null;
+}
+
+function getRegisterContext(rows: unknown[][]): RegisterContext | null {
+  const cached = registerContextCache.get(rows);
+  if (cached !== undefined) return cached;
+
+  const found = findRegisterHeader(rows);
+  if (!found) {
+    registerContextCache.set(rows, null);
+    return null;
+  }
+
+  const context = {
+    headerNorm: found.norm,
+    dataRows: rows.slice(found.row + 1),
+  };
+  registerContextCache.set(rows, context);
+  return context;
 }
 
 function normSeason(val: unknown): string {
@@ -215,74 +200,47 @@ function regdateCellFilled(v: unknown): boolean {
   return true;
 }
 
-function loadBrandRegisterDf(
-  ioBytes: Buffer | null,
-  targetSheetName?: string | null
-): {
-  스타일코드: string;
-  시즌: string;
-  온라인상품등록여부: string;
-  제외여부: string;
-}[] {
-  if (ioBytes) {
-    const cacheKey = targetSheetName ?? "__ALL__";
-    const cached = registerDfCache.get(ioBytes)?.get(cacheKey);
-    if (cached) return cached;
+function loadBrandRegisterRows(rows: unknown[][]): RegisterRow[] {
+  const cached = registerDfCache.get(rows);
+  if (cached) return cached;
+
+  const context = getRegisterContext(rows);
+  if (!context) {
+    registerDfCache.set(rows, []);
+    return [];
   }
-  const wb = readWorkbook(ioBytes);
-  if (!wb) return [];
-  const names = targetSheetName
-    ? wb.SheetNames.includes(targetSheetName)
-      ? [targetSheetName]
-      : []
-    : wb.SheetNames;
-  for (const sheetName of names) {
-    const dfRaw = sheetToAoa(wb, sheetName);
-    const found = findRegisterHeader(dfRaw);
-    if (!found) continue;
-    const { row: headerRowIdx, norm: headerVals } = found;
-    const styleCol =
-      colIdx(headerVals, "스타일코드") ?? colIdx(headerVals, "스타일");
-    const regdateCol = colIdx(headerVals, "공홈등록일");
-    const seasonCol = colIdx(headerVals, "시즌");
-    const excludeCol = colIdx(headerVals, "제외");
-    if (styleCol === null || regdateCol === null) continue;
-    const out: {
-      스타일코드: string;
-      시즌: string;
-      온라인상품등록여부: string;
-      제외여부: string;
-    }[] = [];
-    for (let r = headerRowIdx + 1; r < dfRaw.length; r++) {
-      const line = dfRaw[r] ?? [];
-      const style = String(line[styleCol] ?? "").trim();
-      if (!style || style === "nan") continue;
-      const reg = line[regdateCol];
-      const ok = regdateCellFilled(reg);
-      const season =
-        seasonCol !== null && seasonCol < line.length
-          ? String(line[seasonCol] ?? "").trim()
-          : "";
-      const ex =
-        excludeCol !== null && excludeCol < line.length
-          ? String(line[excludeCol] ?? "").trim()
-          : "";
-      out.push({
-        스타일코드: style,
-        시즌: season,
-        온라인상품등록여부: ok ? "등록" : "미등록",
-        제외여부: ex,
-      });
-    }
-    if (ioBytes) {
-      const cacheKey = targetSheetName ?? "__ALL__";
-      const cache = registerDfCache.get(ioBytes) ?? new Map();
-      cache.set(cacheKey, out);
-      registerDfCache.set(ioBytes, cache);
-    }
-    return out;
+
+  const { headerNorm, dataRows } = context;
+  const styleCol = colIdx(headerNorm, "스타일코드") ?? colIdx(headerNorm, "스타일");
+  const regdateCol = colIdx(headerNorm, "공홈등록일");
+  const seasonCol = colIdx(headerNorm, "시즌");
+  const excludeCol = colIdx(headerNorm, "제외");
+  if (styleCol === null || regdateCol === null) {
+    registerDfCache.set(rows, []);
+    return [];
   }
-  return [];
+
+  const out: RegisterRow[] = [];
+  for (const line of dataRows) {
+    const style = String(line?.[styleCol] ?? "").trim();
+    if (!style || style === "nan") continue;
+    const reg = line?.[regdateCol];
+    out.push({
+      스타일코드: style,
+      시즌:
+        seasonCol !== null && seasonCol < (line?.length ?? 0)
+          ? String(line?.[seasonCol] ?? "").trim()
+          : "",
+      온라인상품등록여부: regdateCellFilled(reg) ? "등록" : "미등록",
+      제외여부:
+        excludeCol !== null && excludeCol < (line?.length ?? 0)
+          ? String(line?.[excludeCol] ?? "").trim()
+          : "",
+    });
+  }
+
+  registerDfCache.set(rows, out);
+  return out;
 }
 
 export function seasonMatchesCell(seasonVal: unknown, selected: string[]): boolean {
@@ -303,27 +261,29 @@ export function seasonMatchesCell(seasonVal: unknown, selected: string[]): boole
   return false;
 }
 
-function baseStyleToFirstInMap(ioBytes: Buffer | null): Map<string, Date> {
-  if (ioBytes) {
-    const cached = baseStyleFirstInCache.get(ioBytes);
-    if (cached) return cached;
-  }
-  const { columns, records } = loadBaseInout(ioBytes, null);
-  const styleCol = findCol(["스타일코드", "스타일"], columns);
-  const firstCol = findCol(["최초입고일", "입고일"], columns);
+function baseStyleToFirstInMap(rows: unknown[][]): Map<string, Date> {
+  const cached = baseStyleFirstInCache.get(rows);
+  if (cached) return cached;
+
+  const table = loadBaseTable(rows);
+  const styleCol = findCol(["스타일코드", "스타일"], table.columns);
+  const firstCol = findCol(["최초입고일", "입고일"], table.columns);
   const map = new Map<string, Date>();
-  if (!styleCol || !firstCol) return map;
-  for (const r of records) {
-    const st = norm(r[styleCol]);
-    if (!st) continue;
-    const dt = parseCellDate(r[firstCol]);
+  if (!styleCol || !firstCol) {
+    baseStyleFirstInCache.set(rows, map);
+    return map;
+  }
+
+  for (const record of table.records) {
+    const style = norm(record[styleCol]);
+    if (!style) continue;
+    const dt = parseCellDate(record[firstCol]);
     if (!dt) continue;
-    const prev = map.get(st);
-    if (!prev || dt < prev) map.set(st, dt);
+    const prev = map.get(style);
+    if (!prev || dt < prev) map.set(style, dt);
   }
-  if (ioBytes) {
-    baseStyleFirstInCache.set(ioBytes, map);
-  }
+
+  baseStyleFirstInCache.set(rows, map);
   return map;
 }
 
@@ -336,25 +296,25 @@ export function countRegisteredStylesFromRegisterSheet(
   if (NO_REG_SHEET_BRANDS.has(brandName)) return null;
   const brandKey = BRAND_TO_KEY[brandName];
   if (!brandKey) return null;
-  const regBytes = sources.onlineByBrand[brandKey];
-  if (!regBytes) return null;
-  const sheet = BRAND_KEY_TO_SHEET_NAME[brandKey];
-  const dfReg = loadBrandRegisterDf(regBytes, sheet);
+  const regRows = sources.onlineByBrandRows[brandKey] ?? [];
+  const dfReg = loadBrandRegisterRows(regRows);
   if (!dfReg.length) return 0;
-  let d = dfReg.filter(
-    (x) =>
-      x.온라인상품등록여부 === "등록" &&
-      (x.제외여부 ?? "").trim() === "포함"
+
+  let filtered = dfReg.filter(
+    (row) =>
+      row.온라인상품등록여부 === "등록" &&
+      (row.제외여부 ?? "").trim() === "포함"
   );
   if (
     selectedSeasons.length &&
     seasonOptions.length &&
     new Set(selectedSeasons).size !== new Set(seasonOptions).size
   ) {
-    d = d.filter((row) => seasonMatchesCell(row.시즌, selectedSeasons));
+    filtered = filtered.filter((row) =>
+      seasonMatchesCell(row.시즌, selectedSeasons)
+    );
   }
-  const uniq = new Set(d.map((x) => norm(x.스타일코드)));
-  return uniq.size;
+  return new Set(filtered.map((row) => norm(row.스타일코드))).size;
 }
 
 function parseDateSeriesVal(v: unknown): Date | null {
@@ -363,115 +323,88 @@ function parseDateSeriesVal(v: unknown): Date | null {
 }
 
 export function loadBrandRegisterAvgDays(
-  regBytes: Buffer | null,
-  inoutBytes: Buffer | null,
-  selectedSeasonsTuple: string[] | null,
-  targetSheetName?: string | null
+  regRows: unknown[][],
+  baseDefaultRows: unknown[][],
+  selectedSeasonsTuple: string[] | null
 ): Record<string, number | null> | null {
-  if (!regBytes?.length) return null;
-  const baseMap = baseStyleToFirstInMap(inoutBytes);
+  if (!regRows.length) return null;
+  const baseMap = baseStyleToFirstInMap(baseDefaultRows);
   if (!baseMap.size) return null;
-  const wb = readWorkbook(regBytes);
-  if (!wb) return null;
-  const names = targetSheetName
-    ? wb.SheetNames.includes(targetSheetName)
-      ? [targetSheetName]
-      : []
-    : wb.SheetNames;
-  for (const sheetName of names) {
-    const dfRaw = sheetToAoa(wb, sheetName);
-    const found = findRegisterHeader(dfRaw);
-    if (!found) continue;
-    const { row: headerRowIdx, norm: headerVals } = found;
-    const styleCol =
-      colIdx(headerVals, "스타일코드") ?? colIdx(headerVals, "스타일");
-    const regdateCol = colIdx(headerVals, "공홈등록일");
-    const seasonCol = colIdx(headerVals, "시즌");
-    const photoHandoverCol = colIdx(headerVals, "포토인계일");
-    const retouchDoneCol = colIdx(headerVals, "리터칭완료일");
-    if (styleCol === null || regdateCol === null) continue;
-    let dataRows: unknown[][] = [];
-    for (let r = headerRowIdx + 1; r < dfRaw.length; r++) {
-      dataRows.push(dfRaw[r] ?? []);
+
+  const context = getRegisterContext(regRows);
+  if (!context) return null;
+
+  const { headerNorm, dataRows } = context;
+  const styleCol = colIdx(headerNorm, "스타일코드") ?? colIdx(headerNorm, "스타일");
+  const regdateCol = colIdx(headerNorm, "공홈등록일");
+  const seasonCol = colIdx(headerNorm, "시즌");
+  const photoHandoverCol = colIdx(headerNorm, "포토인계일");
+  const retouchDoneCol = colIdx(headerNorm, "리터칭완료일");
+  if (styleCol === null || regdateCol === null) return null;
+
+  let rows = dataRows;
+  if (selectedSeasonsTuple?.length && seasonCol !== null) {
+    const normSel = selectedSeasonsTuple.map((x) => normSeason(x)).filter(Boolean);
+    if (normSel.length) {
+      rows = rows.filter((line) => {
+        const raw = String(line?.[seasonCol] ?? "").trim().toUpperCase();
+        const ns = normSeason(line?.[seasonCol]);
+        if (!normSel.includes(ns)) return false;
+        return normSel.some((s) => new RegExp(`^G?${s}$`).test(raw));
+      });
     }
-    if (selectedSeasonsTuple?.length && seasonCol !== null) {
-      const normSel = selectedSeasonsTuple.map((x) => normSeason(x)).filter(Boolean);
-      if (normSel.length) {
-        dataRows = dataRows.filter((line) => {
-          const raw = String(line[seasonCol] ?? "").trim().toUpperCase();
-          const ns = normSeason(line[seasonCol]);
-          if (!normSel.includes(ns)) return false;
-          return normSel.some((s) => new RegExp(`^G?${s}$`).test(raw));
-        });
-      }
-    }
-    if (!dataRows.length) continue;
-    const totalDiffs: number[] = [];
-    const photoHandoverDiffs: number[] = [];
-    const photoDiffs: number[] = [];
-    const registerDiffs: number[] = [];
-    const dfCalc: { style: string; regDt: Date }[] = [];
-    for (const line of dataRows) {
-      const styleNorm = norm(line[styleCol]);
-      const regDt = parseDateSeriesVal(line[regdateCol]);
-      if (styleNorm && regDt) dfCalc.push({ style: styleNorm, regDt });
-    }
-    for (const row of dfCalc) {
-      const baseDt = baseMap.get(row.style);
-      if (!baseDt) continue;
-      const diff = Math.floor(
-        (row.regDt.getTime() - baseDt.getTime()) / 86400000
-      );
-      if (diff >= 0) totalDiffs.push(diff);
-    }
-    for (const line of dataRows) {
-      const styleNorm = norm(line[styleCol]);
-      const regDt = parseDateSeriesVal(line[regdateCol]);
-      const baseDt = baseMap.get(styleNorm);
-      if (!styleNorm || !regDt || !baseDt) continue;
-      const photoDt =
-        photoHandoverCol !== null && photoHandoverCol < line.length
-          ? parseDateSeriesVal(line[photoHandoverCol])
-          : null;
-      const retouchDt =
-        retouchDoneCol !== null && retouchDoneCol < line.length
-          ? parseDateSeriesVal(line[retouchDoneCol])
-          : null;
-      if (photoDt && photoHandoverCol !== null) {
-        const d = Math.floor(
-          (photoDt.getTime() - baseDt.getTime()) / 86400000
-        );
-        photoHandoverDiffs.push(Math.max(0, d));
-      }
-      if (retouchDt && photoDt && retouchDoneCol !== null) {
-        const d = Math.floor(
-          (retouchDt.getTime() - photoDt.getTime()) / 86400000
-        );
-        photoDiffs.push(Math.max(0, d));
-      }
-      if (retouchDt && retouchDoneCol !== null) {
-        const d = Math.floor(
-          (regDt.getTime() - retouchDt.getTime()) / 86400000
-        );
-        registerDiffs.push(Math.max(0, d));
-      }
-    }
-    const avg = (arr: number[]) =>
-      arr.length ? arr.reduce((a, b) => a + b, 0) / arr.length : null;
-    return {
-      평균전체등록소요일수: avg(totalDiffs),
-      포토인계소요일수: avg(photoHandoverDiffs),
-      포토소요일수: avg(photoDiffs),
-      상품등록소요일수: avg(registerDiffs),
-    };
   }
-  return null;
+  if (!rows.length) return null;
+
+  const totalDiffs: number[] = [];
+  const photoHandoverDiffs: number[] = [];
+  const photoDiffs: number[] = [];
+  const registerDiffs: number[] = [];
+
+  for (const line of rows) {
+    const style = norm(line?.[styleCol]);
+    const regDt = parseDateSeriesVal(line?.[regdateCol]);
+    if (!style || !regDt) continue;
+
+    const baseDt = baseMap.get(style);
+    if (!baseDt) continue;
+
+    const totalDiff = Math.floor(
+      (regDt.getTime() - baseDt.getTime()) / 86400000
+    );
+    if (totalDiff >= 0) totalDiffs.push(totalDiff);
+
+    const photoDt =
+      photoHandoverCol !== null ? parseDateSeriesVal(line?.[photoHandoverCol]) : null;
+    const retouchDt =
+      retouchDoneCol !== null ? parseDateSeriesVal(line?.[retouchDoneCol]) : null;
+
+    if (photoDt) {
+      const d = Math.floor((photoDt.getTime() - baseDt.getTime()) / 86400000);
+      photoHandoverDiffs.push(Math.max(0, d));
+    }
+    if (retouchDt && photoDt) {
+      const d = Math.floor((retouchDt.getTime() - photoDt.getTime()) / 86400000);
+      photoDiffs.push(Math.max(0, d));
+    }
+    if (retouchDt) {
+      const d = Math.floor((regDt.getTime() - retouchDt.getTime()) / 86400000);
+      registerDiffs.push(Math.max(0, d));
+    }
+  }
+
+  const avg = (arr: number[]) =>
+    arr.length ? arr.reduce((a, b) => a + b, 0) / arr.length : null;
+
+  return {
+    평균전체등록소요일수: avg(totalDiffs),
+    포토인계소요일수: avg(photoHandoverDiffs),
+    포토소요일수: avg(photoDiffs),
+    상품등록소요일수: avg(registerDiffs),
+  };
 }
 
-function pickSeason(
-  seasons: unknown[],
-  inFlags: boolean[]
-): string {
+function pickSeason(seasons: unknown[], inFlags: boolean[]): string {
   for (let i = 0; i < seasons.length; i++) {
     if (inFlags[i]) {
       const s = String(seasons[i] ?? "").trim();
@@ -489,21 +422,22 @@ export function buildStyleTableAll(sources: SourceBundle): {
   출고여부: boolean;
   온라인상품등록여부: string;
 }[] {
-  const baseBytes = sources.inout;
-  let base = loadBaseInout(baseBytes, "물류입고스타일수");
-  if (!base.records.length && baseBytes) {
-    base = loadBaseInout(baseBytes, null);
-  }
-  const { columns, records } = base;
-  if (!records.length) return [];
-  const styleCol = findCol(["스타일코드", "스타일"], columns);
-  const brandCol = findCol(["브랜드(Now:단품)"], columns);
-  const seasonCol = findCol(["시즌", "season"], columns);
-  const firstInCol = findCol(["최초입고일", "입고일"], columns);
-  const outAmtCol = findCol(["출고액"], columns);
-  const inQtyCol = findCol(["입고량"], columns);
-  const inAmtCol = findCol(["누적입고액", "입고액"], columns);
+  const baseRows =
+    sources.baseInoutRows.length > 0
+      ? sources.baseInoutRows
+      : sources.baseDefaultRows;
+  const base = loadBaseTable(baseRows);
+  if (!base.records.length) return [];
+
+  const styleCol = findCol(["스타일코드", "스타일"], base.columns);
+  const brandCol = findCol(["브랜드"], base.columns);
+  const seasonCol = findCol(["시즌", "season"], base.columns);
+  const firstInCol = findCol(["최초입고일", "입고일"], base.columns);
+  const outAmtCol = findCol(["출고액"], base.columns);
+  const inQtyCol = findCol(["입고량"], base.columns);
+  const inAmtCol = findCol(["누적입고액", "입고액"], base.columns);
   if (!styleCol || !brandCol) return [];
+
   const groups = new Map<
     string,
     {
@@ -514,110 +448,88 @@ export function buildStyleTableAll(sources: SourceBundle): {
       outFlags: boolean[];
     }
   >();
-  for (const r of records) {
-    const style = String(r[styleCol] ?? "").trim();
+
+  for (const record of base.records) {
+    const style = String(record[styleCol] ?? "").trim();
     if (!style) continue;
-    const brand = String(r["브랜드"] ?? r[brandCol] ?? "").trim();
-    const season = seasonCol ? r[seasonCol] : "";
+
+    const brand = String(record[brandCol] ?? "").trim();
+    const season = seasonCol ? record[seasonCol] : "";
     let inDateOk = false;
-    if (firstInCol && firstInCol in r) {
-      const dt = parseCellDate(r[firstInCol]);
-      inDateOk = dt !== null;
-      const num = toNum(r[firstInCol]);
+    if (firstInCol && firstInCol in record) {
+      inDateOk = parseCellDate(record[firstInCol]) !== null;
+      const num = toNum(record[firstInCol]);
       if (num !== null && num >= 1 && num <= 60000) inDateOk = true;
     }
     const hasQty =
-      inQtyCol && inQtyCol in r
-        ? (toNum(r[inQtyCol]) ?? 0) > 0
-        : false;
+      inQtyCol && inQtyCol in record ? (toNum(record[inQtyCol]) ?? 0) > 0 : false;
     const hasAmt =
-      inAmtCol && inAmtCol in r
-        ? (toNum(r[inAmtCol]) ?? 0) > 0
-        : false;
-    const 입고 = inDateOk || hasQty || hasAmt;
-    const outAmt =
-      outAmtCol && outAmtCol in r ? toNum(r[outAmtCol]) ?? 0 : 0;
-    const 출고 = outAmt > 0;
+      inAmtCol && inAmtCol in record ? (toNum(record[inAmtCol]) ?? 0) > 0 : false;
+    const inFlag = inDateOk || hasQty || hasAmt;
+    const outFlag =
+      outAmtCol && outAmtCol in record ? (toNum(record[outAmtCol]) ?? 0) > 0 : false;
+
     const key = `${brand}\u0000${style}`;
-    let g = groups.get(key);
-    if (!g) {
-      g = {
-        brand,
-        style,
-        seasons: [],
-        inFlags: [],
-        outFlags: [],
-      };
-      groups.set(key, g);
-    }
-    g.seasons.push(season);
-    g.inFlags.push(입고);
-    g.outFlags.push(출고);
+    const group = groups.get(key) ?? {
+      brand,
+      style,
+      seasons: [],
+      inFlags: [],
+      outFlags: [],
+    };
+    group.seasons.push(season);
+    group.inFlags.push(inFlag);
+    group.outFlags.push(outFlag);
+    groups.set(key, group);
   }
-  const rows: {
-    브랜드: string;
-    스타일코드: string;
-    시즌: string;
-    입고여부: boolean;
-    출고여부: boolean;
-    온라인상품등록여부: string;
-  }[] = [];
-  for (const g of groups.values()) {
-    const 시즌 = pickSeason(g.seasons, g.inFlags);
-    const 입고여부 = g.inFlags.some(Boolean);
-    const 출고여부 = g.outFlags.some(Boolean);
-    rows.push({
-      브랜드: g.brand,
-      스타일코드: g.style,
-      시즌,
-      입고여부,
-      출고여부,
-      온라인상품등록여부: "미등록",
-    });
-  }
+
+  const rows = Array.from(groups.values()).map((group) => ({
+    브랜드: group.brand,
+    스타일코드: group.style,
+    시즌: pickSeason(group.seasons, group.inFlags),
+    입고여부: group.inFlags.some(Boolean),
+    출고여부: group.outFlags.some(Boolean),
+    온라인상품등록여부: "미등록",
+  }));
+
   const byBrand = new Map<string, typeof rows>();
   for (const row of rows) {
     const arr = byBrand.get(row.브랜드) ?? [];
     arr.push(row);
     byBrand.set(row.브랜드, arr);
   }
+
   const out: typeof rows = [];
-  for (const [brandName, bAgg] of byBrand) {
+  for (const [brandName, brandRows] of byBrand) {
     const brandKey = BRAND_TO_KEY[brandName];
     if (brandKey) {
-      const regBytes = sources.onlineByBrand[brandKey];
-      const dfReg = loadBrandRegisterDf(
-        regBytes,
-        BRAND_KEY_TO_SHEET_NAME[brandKey]
-      );
-      if (dfReg.length) {
+      const regRows = loadBrandRegisterRows(sources.onlineByBrandRows[brandKey] ?? []);
+      if (regRows.length) {
         const regMap = new Map<string, string>();
-        for (const r of dfReg) {
-          const k = norm(r.스타일코드);
-          const isReg = r.온라인상품등록여부 === "등록";
-          const prev = regMap.get(k) === "등록";
-          regMap.set(k, prev || isReg ? "등록" : "미등록");
+        for (const row of regRows) {
+          const key = norm(row.스타일코드);
+          const isRegistered = row.온라인상품등록여부 === "등록";
+          const prev = regMap.get(key) === "등록";
+          regMap.set(key, prev || isRegistered ? "등록" : "미등록");
         }
-        for (const r of bAgg) {
-          const reg = regMap.get(norm(r.스타일코드)) ?? "미등록";
+        for (const row of brandRows) {
           out.push({
-            ...r,
-            온라인상품등록여부: reg || "미등록",
+            ...row,
+            온라인상품등록여부: regMap.get(norm(row.스타일코드)) ?? "미등록",
           });
         }
         continue;
       }
     }
-    for (const r of bAgg) {
-      out.push({ ...r, 온라인상품등록여부: "미등록" });
-    }
+    out.push(...brandRows);
   }
+
   return out;
 }
 
 export type InoutRow = Record<string, string>;
 
-export function buildInoutAggregates(ioBytes: Buffer | null): {
+export function buildInoutAggregates(baseDefaultRows: unknown[][]): {
   rows: InoutRow[];
   agg: {
     brandInQty: Record<string, number>;
@@ -637,16 +549,17 @@ export function buildInoutAggregates(ioBytes: Buffer | null): {
     판매액: number;
   }[];
 } {
-  const { columns, records } = loadBaseInout(ioBytes, "물류입고스타일수");
-  if (!records.length) {
+  const base = loadBaseTable(baseDefaultRows);
+  if (!base.records.length) {
     return {
       rows: [],
       agg: { brandInQty: {}, brandOutQty: {}, brandSaleQty: {} },
       brandSeasonRows: [],
     };
   }
-  const styleCol = findCol(["스타일코드", "스타일"], columns);
-  const brandCol = findCol(["브랜드(Now:단품)"], columns);
+
+  const styleCol = findCol(["스타일코드", "스타일"], base.columns);
+  const brandCol = findCol(["브랜드"], base.columns);
   if (!styleCol || !brandCol) {
     return {
       rows: [],
@@ -654,67 +567,64 @@ export function buildInoutAggregates(ioBytes: Buffer | null): {
       brandSeasonRows: [],
     };
   }
-  const orderQtyCol = findCol(["발주 STY", "발주수", "발주량"], columns);
-  const orderAmtCol = findCol(["발주액"], columns);
-  const inAmtCol = findCol(["누적입고액", "입고액"], columns);
-  const outAmtCol = findCol(["출고액"], columns);
-  const saleAmtCol = findCol(["누적판매액", "판매액"], columns);
-  const firstInCol = findCol(["최초입고일", "입고일"], columns);
-  const inQtyCol = findCol(["입고량"], columns);
-  const seasonCol = findCol(["시즌", "season"], columns);
 
-  type R = {
+  const orderQtyCol = findCol(["발주 STY", "발주수", "발주량"], base.columns);
+  const orderAmtCol = findCol(["발주액"], base.columns);
+  const inAmtCol = findCol(["누적입고액", "입고액"], base.columns);
+  const outAmtCol = findCol(["출고액"], base.columns);
+  const saleAmtCol = findCol(["누적판매액", "판매액"], base.columns);
+  const firstInCol = findCol(["최초입고일", "입고일"], base.columns);
+  const inQtyCol = findCol(["입고량"], base.columns);
+  const seasonCol = findCol(["시즌", "season"], base.columns);
+
+  type ParsedRow = {
     style: string;
     brand: string;
     season: string;
-    _in: boolean;
-    _out: boolean;
-    _sale: boolean;
+    inFlag: boolean;
+    outFlag: boolean;
+    saleFlag: boolean;
     raw: Record<string, unknown>;
   };
-  const parsed: R[] = [];
-  for (const r of records) {
-    const style = String(r[styleCol] ?? "").trim();
+
+  const parsed: ParsedRow[] = [];
+  for (const record of base.records) {
+    const style = String(record[styleCol] ?? "").trim();
     if (!style) continue;
-    const brand = String(r["브랜드"] ?? r[brandCol] ?? "").trim();
-    const season = seasonCol ? String(r[seasonCol] ?? "").trim() : "";
+    const brand = String(record[brandCol] ?? "").trim();
+    const season = seasonCol ? String(record[seasonCol] ?? "").trim() : "";
+
     let inDateOk = false;
-    if (firstInCol && firstInCol in r) {
-      inDateOk = parseCellDate(r[firstInCol]) !== null;
-      const num = toNum(r[firstInCol]);
+    if (firstInCol && firstInCol in record) {
+      inDateOk = parseCellDate(record[firstInCol]) !== null;
+      const num = toNum(record[firstInCol]);
       if (num !== null && num >= 1 && num <= 60000) inDateOk = true;
     }
     const hasQty =
-      inQtyCol && inQtyCol in r
-        ? (toNum(r[inQtyCol]) ?? 0) > 0
-        : false;
+      inQtyCol && inQtyCol in record ? (toNum(record[inQtyCol]) ?? 0) > 0 : false;
     const hasAmt =
-      inAmtCol && inAmtCol in r
-        ? (toNum(r[inAmtCol]) ?? 0) > 0
-        : false;
-    const _in = inDateOk || hasQty || hasAmt;
-    const _out =
-      outAmtCol && outAmtCol in r
-        ? (toNum(r[outAmtCol]) ?? 0) > 0
-        : false;
-    const _sale =
-      saleAmtCol && saleAmtCol in r
-        ? (toNum(r[saleAmtCol]) ?? 0) > 0
-        : false;
-    parsed.push({ style, brand, season, _in, _out, _sale, raw: r });
+      inAmtCol && inAmtCol in record ? (toNum(record[inAmtCol]) ?? 0) > 0 : false;
+    const inFlag = inDateOk || hasQty || hasAmt;
+    const outFlag =
+      outAmtCol && outAmtCol in record ? (toNum(record[outAmtCol]) ?? 0) > 0 : false;
+    const saleFlag =
+      saleAmtCol && saleAmtCol in record ? (toNum(record[saleAmtCol]) ?? 0) > 0 : false;
+
+    parsed.push({ style, brand, season, inFlag, outFlag, saleFlag, raw: record });
   }
-  const sumAmt = (g: R[], c: string | null) =>
-    !c
-      ? 0
-      : g.reduce((s, x) => s + (toNum(x.raw[c]) ?? 0), 0);
-  const uniq = (g: R[], pred: (x: R) => boolean) =>
-    new Set(g.filter(pred).map((x) => x.style)).size;
-  const byBrand = new Map<string, R[]>();
-  for (const p of parsed) {
-    const arr = byBrand.get(p.brand) ?? [];
-    arr.push(p);
-    byBrand.set(p.brand, arr);
+
+  const sumAmt = (rows: ParsedRow[], col: string | null) =>
+    !col ? 0 : rows.reduce((sum, row) => sum + (toNum(row.raw[col]) ?? 0), 0);
+  const uniq = (rows: ParsedRow[], pred: (row: ParsedRow) => boolean) =>
+    new Set(rows.filter(pred).map((row) => row.style)).size;
+
+  const byBrand = new Map<string, ParsedRow[]>();
+  for (const row of parsed) {
+    const arr = byBrand.get(row.brand) ?? [];
+    arr.push(row);
+    byBrand.set(row.brand, arr);
   }
+
   const brandInQty: Record<string, number> = {};
   const brandOutQty: Record<string, number> = {};
   const brandSaleQty: Record<string, number> = {};
@@ -723,49 +633,54 @@ export function buildInoutAggregates(ioBytes: Buffer | null): {
   const brandInAmt: Record<string, number> = {};
   const brandOutAmt: Record<string, number> = {};
   const brandSaleAmt: Record<string, number> = {};
-  for (const [b, g] of byBrand) {
-    brandInQty[b] = uniq(g, (x) => x._in);
-    brandOutQty[b] = uniq(g, (x) => x._out);
-    brandSaleQty[b] = uniq(g, (x) => x._sale);
-    brandOrderQty[b] = new Set(g.map((x) => x.style)).size;
-    brandOrderAmt[b] = sumAmt(g, orderAmtCol);
-    brandInAmt[b] = sumAmt(
-      g.filter((x) => x._in),
+
+  for (const [brand, rows] of byBrand) {
+    brandInQty[brand] = uniq(rows, (row) => row.inFlag);
+    brandOutQty[brand] = uniq(rows, (row) => row.outFlag);
+    brandSaleQty[brand] = uniq(rows, (row) => row.saleFlag);
+    brandOrderQty[brand] = new Set(rows.map((row) => row.style)).size;
+    brandOrderAmt[brand] = sumAmt(rows, orderAmtCol);
+    brandInAmt[brand] = sumAmt(
+      rows.filter((row) => row.inFlag),
       inAmtCol
     );
-    brandOutAmt[b] = sumAmt(
-      g.filter((x) => x._out),
+    brandOutAmt[brand] = sumAmt(
+      rows.filter((row) => row.outFlag),
       outAmtCol
     );
-    brandSaleAmt[b] = sumAmt(g, saleAmtCol);
+    brandSaleAmt[brand] = sumAmt(rows, saleAmtCol);
   }
-  const fmtNum = (v: number) => (Number.isFinite(v) ? `${Math.round(v).toLocaleString("ko-KR")}` : "0");
+
+  const fmtNum = (v: number) =>
+    Number.isFinite(v) ? `${Math.round(v).toLocaleString("ko-KR")}` : "0";
   const fmtEok = (v: number) =>
     `${Math.round(v / 1e8).toLocaleString("ko-KR")} 억 원`;
+
   const rows: InoutRow[] = [];
-  for (const [, buBrands] of BU_GROUPS) {
-    for (const b of buBrands) {
+  for (const [, brands] of BU_GROUPS) {
+    for (const brand of brands) {
       rows.push({
-        브랜드: b,
-        "발주 STY수": fmtNum(brandOrderQty[b] ?? 0),
-        발주액: fmtEok(brandOrderAmt[b] ?? 0),
-        "입고 STY수": fmtNum(brandInQty[b] ?? 0),
-        입고액: fmtEok(brandInAmt[b] ?? 0),
-        "출고 STY수": fmtNum(brandOutQty[b] ?? 0),
-        출고액: fmtEok(brandOutAmt[b] ?? 0),
-        "판매 STY수": fmtNum(brandSaleQty[b] ?? 0),
-        판매액: fmtEok(brandSaleAmt[b] ?? 0),
+        브랜드: brand,
+        "발주 STY수": fmtNum(brandOrderQty[brand] ?? 0),
+        발주액: fmtEok(brandOrderAmt[brand] ?? 0),
+        "입고 STY수": fmtNum(brandInQty[brand] ?? 0),
+        입고액: fmtEok(brandInAmt[brand] ?? 0),
+        "출고 STY수": fmtNum(brandOutQty[brand] ?? 0),
+        출고액: fmtEok(brandOutAmt[brand] ?? 0),
+        "판매 STY수": fmtNum(brandSaleQty[brand] ?? 0),
+        판매액: fmtEok(brandSaleAmt[brand] ?? 0),
       });
     }
   }
-  const bsKey = (x: R) => `${x.brand}\u0000${x.season}`;
-  const bsMap = new Map<string, R[]>();
-  for (const p of parsed) {
-    const k = bsKey(p);
-    const arr = bsMap.get(k) ?? [];
-    arr.push(p);
-    bsMap.set(k, arr);
+
+  const byBrandSeason = new Map<string, ParsedRow[]>();
+  for (const row of parsed) {
+    const key = `${row.brand}\u0000${row.season}`;
+    const arr = byBrandSeason.get(key) ?? [];
+    arr.push(row);
+    byBrandSeason.set(key, arr);
   }
+
   const brandSeasonRows: {
     브랜드: string;
     시즌: string;
@@ -778,27 +693,34 @@ export function buildInoutAggregates(ioBytes: Buffer | null): {
     판매STY수: number;
     판매액: number;
   }[] = [];
-  for (const [, grp] of bsMap) {
-    if (!grp.length) continue;
-    const b = grp[0].brand;
-    const s = grp[0].season;
-    const inGrp = grp.filter((x) => x._in);
-    const outGrp = grp.filter((x) => x._out);
-    const saleGrp = grp.filter((x) => x._sale);
+
+  for (const [, rowsForSeason] of byBrandSeason) {
+    if (!rowsForSeason.length) continue;
+    const brand = rowsForSeason[0].brand;
+    const season = rowsForSeason[0].season;
+    const inRows = rowsForSeason.filter((row) => row.inFlag);
+    const outRows = rowsForSeason.filter((row) => row.outFlag);
+    const saleRows = rowsForSeason.filter((row) => row.saleFlag);
+
     brandSeasonRows.push({
-      브랜드: b,
-      시즌: s,
-      발주STY수: new Set(grp.map((x) => x.style)).size,
-      발주액: sumAmt(grp, orderAmtCol),
-      입고STY수: new Set(inGrp.map((x) => x.style)).size,
-      입고액: sumAmt(inGrp, inAmtCol),
-      출고STY수: new Set(outGrp.map((x) => x.style)).size,
-      출고액: sumAmt(outGrp, outAmtCol),
-      판매STY수: new Set(saleGrp.map((x) => x.style)).size,
-      판매액: sumAmt(grp, saleAmtCol),
+      브랜드: brand,
+      시즌: season,
+      발주STY수: new Set(rowsForSeason.map((row) => row.style)).size,
+      발주액: sumAmt(rowsForSeason, orderAmtCol),
+      입고STY수: new Set(inRows.map((row) => row.style)).size,
+      입고액: sumAmt(inRows, inAmtCol),
+      출고STY수: new Set(outRows.map((row) => row.style)).size,
+      출고액: sumAmt(outRows, outAmtCol),
+      판매STY수: new Set(saleRows.map((row) => row.style)).size,
+      판매액: sumAmt(rowsForSeason, saleAmtCol),
     });
   }
-  return { rows, agg: { brandInQty, brandOutQty, brandSaleQty }, brandSeasonRows };
+
+  return {
+    rows,
+    agg: { brandInQty, brandOutQty, brandSaleQty },
+    brandSeasonRows,
+  };
 }
 
 function eokLabel(x: number): string {
@@ -843,88 +765,89 @@ export function computeDashboard(
 ): DashboardPayload {
   const { selectedSeasons, selectedBrand } = filters;
   const seasons = SEASON_OPTIONS;
-  const baseBytes = sources.inout;
-  const dfStyleAll = buildStyleTableAll(sources);
-  const { rows: inoutRows, agg: inoutAgg, brandSeasonRows } =
-    buildInoutAggregates(baseBytes);
 
-  let dfBase = loadBaseInout(baseBytes, "물류입고스타일수");
+  const dfStyleAll = buildStyleTableAll(sources);
+  const {
+    rows: inoutRows,
+    agg: inoutAgg,
+    brandSeasonRows,
+  } = buildInoutAggregates(sources.baseDefaultRows);
+
+  let base = loadBaseTable(sources.baseDefaultRows);
   if (selectedBrand) {
-    dfBase = {
-      ...dfBase,
-      records: dfBase.records.filter(
-        (r) => String(r["브랜드"] ?? "").trim() === selectedBrand
+    base = {
+      ...base,
+      records: base.records.filter(
+        (record) => String(record["브랜드"] ?? "").trim() === selectedBrand
       ),
     };
-  } 
-  let dfKpi = dfBase;
-  const seasonCol = findCol(["시즌", "season"], dfBase.columns);
+  }
+
+  let kpiBase = base;
+  const seasonCol = findCol(["시즌", "season"], base.columns);
   if (
     selectedSeasons.length &&
     new Set(selectedSeasons).size !== new Set(seasons).size &&
     seasonCol &&
-    dfBase.columns.includes(seasonCol)
+    base.columns.includes(seasonCol)
   ) {
-    dfKpi = {
-      ...dfBase,
-      records: dfBase.records.filter((r) =>
-        seasonMatchesCell(r[seasonCol], selectedSeasons)
+    kpiBase = {
+      ...base,
+      records: base.records.filter((record) =>
+        seasonMatchesCell(record[seasonCol], selectedSeasons)
       ),
     };
   }
-  const inAmtCol = findCol(["누적입고액", "입고액"], dfKpi.columns);
-  const outAmtCol = findCol(["출고액"], dfKpi.columns);
+
+  const inAmtCol = findCol(["누적입고액", "입고액"], kpiBase.columns);
+  const outAmtCol = findCol(["출고액"], kpiBase.columns);
   const saleAmtCol = findCol(
     ["누적 판매액[외형매출]", "누적판매액", "판매액"],
-    dfKpi.columns
+    kpiBase.columns
   );
-  const firstInCol = findCol(["최초입고일", "입고일"], dfKpi.columns);
-  const inQtyCol = findCol(["입고량"], dfKpi.columns);
-  const styleCol = findCol(["스타일코드", "스타일"], dfKpi.columns);
+  const firstInCol = findCol(["최초입고일", "입고일"], kpiBase.columns);
+  const inQtyCol = findCol(["입고량"], kpiBase.columns);
+  const styleCol = findCol(["스타일코드", "스타일"], kpiBase.columns);
+
   let totalInAmt = 0;
   let totalOutAmt = 0;
   let totalSaleAmt = 0;
-  for (const r of dfKpi.records) {
-    if (inAmtCol) totalInAmt += toNum(r[inAmtCol]) ?? 0;
-    if (outAmtCol) totalOutAmt += toNum(r[outAmtCol]) ?? 0;
-    if (saleAmtCol) totalSaleAmt += toNum(r[saleAmtCol]) ?? 0;
+  for (const record of kpiBase.records) {
+    if (inAmtCol) totalInAmt += toNum(record[inAmtCol]) ?? 0;
+    if (outAmtCol) totalOutAmt += toNum(record[outAmtCol]) ?? 0;
+    if (saleAmtCol) totalSaleAmt += toNum(record[saleAmtCol]) ?? 0;
   }
+
   let totalInSty = 0;
   let totalOutSty = 0;
   let totalSaleSty = 0;
-  if (dfKpi.records.length && styleCol && dfKpi.columns.includes(styleCol)) {
+  if (kpiBase.records.length && styleCol && kpiBase.columns.includes(styleCol)) {
     const stylesIn = new Set<string>();
     const stylesOut = new Set<string>();
     const stylesSale = new Set<string>();
-    for (const r of dfKpi.records) {
-      const st = String(r[styleCol] ?? "").trim();
-      if (!st) continue;
+    for (const record of kpiBase.records) {
+      const style = String(record[styleCol] ?? "").trim();
+      if (!style) continue;
+
       let inDateOk = false;
-      if (firstInCol && firstInCol in r) {
-        inDateOk = parseCellDate(r[firstInCol]) !== null;
-        const num = toNum(r[firstInCol]);
+      if (firstInCol && firstInCol in record) {
+        inDateOk = parseCellDate(record[firstInCol]) !== null;
+        const num = toNum(record[firstInCol]);
         if (num !== null && num >= 1 && num <= 60000) inDateOk = true;
       }
       const hasQty =
-        inQtyCol && inQtyCol in r
-          ? (toNum(r[inQtyCol]) ?? 0) > 0
-          : false;
+        inQtyCol && inQtyCol in record ? (toNum(record[inQtyCol]) ?? 0) > 0 : false;
       const hasAmt =
-        inAmtCol && inAmtCol in r
-          ? (toNum(r[inAmtCol]) ?? 0) > 0
-          : false;
-      const _in = inDateOk || hasQty || hasAmt;
-      const _out =
-        outAmtCol && outAmtCol in r
-          ? (toNum(r[outAmtCol]) ?? 0) > 0
-          : false;
-      const _sale =
-        saleAmtCol && saleAmtCol in r
-          ? (toNum(r[saleAmtCol]) ?? 0) > 0
-          : false;
-      if (_in) stylesIn.add(st);
-      if (_out) stylesOut.add(st);
-      if (_sale) stylesSale.add(st);
+        inAmtCol && inAmtCol in record ? (toNum(record[inAmtCol]) ?? 0) > 0 : false;
+      const inFlag = inDateOk || hasQty || hasAmt;
+      const outFlag =
+        outAmtCol && outAmtCol in record ? (toNum(record[outAmtCol]) ?? 0) > 0 : false;
+      const saleFlag =
+        saleAmtCol && saleAmtCol in record ? (toNum(record[saleAmtCol]) ?? 0) > 0 : false;
+
+      if (inFlag) stylesIn.add(style);
+      if (outFlag) stylesOut.add(style);
+      if (saleFlag) stylesSale.add(style);
     }
     totalInSty = stylesIn.size;
     totalOutSty = stylesOut.size;
@@ -939,83 +862,123 @@ export function computeDashboard(
     totalSaleSty = Object.values(inoutAgg.brandSaleQty).reduce((a, b) => a + b, 0);
   }
 
-  let dfForTable = dfStyleAll;
+  let tableRows = dfStyleAll;
   if (
     selectedSeasons.length &&
     new Set(selectedSeasons).size !== new Set(seasons).size
   ) {
-    dfForTable = dfForTable.filter((r) =>
-      seasonMatchesCell(r.시즌, selectedSeasons)
+    tableRows = tableRows.filter((row) =>
+      seasonMatchesCell(row.시즌, selectedSeasons)
     );
   }
+
   const seen = new Set<string>();
-  const dfIn = dfForTable.filter((r) => {
-    if (r.입고여부 !== true) return false;
-    const k = `${r.브랜드}\u0000${r.시즌}\u0000${r.스타일코드}`;
-    if (seen.has(k)) return false;
-    seen.add(k);
+  const inRows = tableRows.filter((row) => {
+    if (!row.입고여부) return false;
+    const key = `${row.브랜드}\u0000${row.시즌}\u0000${row.스타일코드}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
     return true;
   });
+
   const allBrands = Array.from(
-    new Set(dfStyleAll.map((r) => r.브랜드).filter(Boolean))
+    new Set(dfStyleAll.map((row) => row.브랜드).filter(Boolean))
   ).sort();
+
   const inByBrand = new Map<string, Set<string>>();
-  for (const r of dfIn) {
-    const set = inByBrand.get(r.브랜드) ?? new Set();
-    set.add(r.스타일코드);
-    inByBrand.set(r.브랜드, set);
+  for (const row of inRows) {
+    const set = inByBrand.get(row.브랜드) ?? new Set<string>();
+    set.add(row.스타일코드);
+    inByBrand.set(row.브랜드, set);
   }
+
+  const seasonTuple =
+    selectedSeasons.length &&
+    new Set(selectedSeasons).size !== new Set(seasons).size
+      ? selectedSeasons
+      : null;
+
   const monitor: MonitorRow[] = allBrands.map((brand) => {
     const noReg = NO_REG_SHEET_BRANDS.has(brand);
-    const 물류 = (inByBrand.get(brand)?.size ?? 0) || 0;
-    const cnt = countRegisteredStylesFromRegisterSheet(
+    const inCount = inByBrand.get(brand)?.size ?? 0;
+    const registeredCount = countRegisteredStylesFromRegisterSheet(
       sources,
       brand,
       selectedSeasons,
       seasons
     );
-    const 온라인등록 = noReg ? -1 : cnt ?? 0;
+    const onlineCount = noReg ? -1 : registeredCount ?? 0;
     const rate =
-      noReg || 물류 === 0 ? 0 : Math.round(((온라인등록 as number) / 물류) * 100) / 100;
-    const _등록율 = noReg ? "-" : `${Math.round(rate * 100)}%`;
-    return {
+      noReg || inCount === 0
+        ? 0
+        : Math.round((onlineCount / inCount) * 100) / 100;
+    const rateText = noReg ? "-" : `${Math.round(rate * 100)}%`;
+
+    const row: MonitorRow = {
       브랜드: brand,
-      물류입고스타일수: 물류,
-      온라인등록스타일수: 온라인등록 as number,
+      물류입고스타일수: inCount,
+      온라인등록스타일수: onlineCount,
       온라인등록율: rate,
-      _등록율,
+      _등록율: rateText,
       포토인계소요일수: "-",
       포토소요일수: "-",
       상품등록소요일수: "-",
       평균전체등록소요일수: "-",
       noReg,
     };
+
+    if (!noReg && BRAND_TO_KEY[brand]) {
+      const brandKey = BRAND_TO_KEY[brand];
+      const avg = loadBrandRegisterAvgDays(
+        sources.onlineByBrandRows[brandKey] ?? [],
+        sources.baseDefaultRows,
+        seasonTuple
+      );
+      if (avg) {
+        const setIf = (key: keyof typeof avg, col: keyof MonitorRow) => {
+          const value = avg[key];
+          if (value !== null && value !== undefined) {
+            (row as Record<string, unknown>)[col] = value.toFixed(1);
+          }
+        };
+        setIf("평균전체등록소요일수", "평균전체등록소요일수");
+        setIf("포토인계소요일수", "포토인계소요일수");
+        setIf("포토소요일수", "포토소요일수");
+        setIf("상품등록소요일수", "상품등록소요일수");
+      }
+    }
+
+    return row;
   });
+
   monitor.sort((a, b) => b.물류입고스타일수 - a.물류입고스타일수);
 
   const brandSeasonByBrand: Record<string, InoutRow[]> = {};
-  for (const r of brandSeasonRows) {
-    const fmt = (v: number, isAmt: boolean) =>
+  for (const row of brandSeasonRows) {
+    const fmt = (value: number, isAmt: boolean) =>
       isAmt
-        ? `${Math.round(v / 1e8).toLocaleString("ko-KR")} 억 원`
-        : `${Math.round(v).toLocaleString("ko-KR")}`;
-    const row: InoutRow = {
-      시즌: String(r.시즌).trim(),
-      "발주 STY수": fmt(r.발주STY수, false),
-      발주액: fmt(r.발주액, true),
-      "입고 STY수": fmt(r.입고STY수, false),
-      입고액: fmt(r.입고액, true),
-      "출고 STY수": fmt(r.출고STY수, false),
-      출고액: fmt(r.출고액, true),
-      "판매 STY수": fmt(r.판매STY수, false),
-      판매액: fmt(r.판매액, true),
+        ? `${Math.round(value / 1e8).toLocaleString("ko-KR")} 억 원`
+        : `${Math.round(value).toLocaleString("ko-KR")}`;
+
+    const formatted: InoutRow = {
+      시즌: String(row.시즌).trim(),
+      "발주 STY수": fmt(row.발주STY수, false),
+      발주액: fmt(row.발주액, true),
+      "입고 STY수": fmt(row.입고STY수, false),
+      입고액: fmt(row.입고액, true),
+      "출고 STY수": fmt(row.출고STY수, false),
+      출고액: fmt(row.출고액, true),
+      "판매 STY수": fmt(row.판매STY수, false),
+      판매액: fmt(row.판매액, true),
     };
-    const arr = brandSeasonByBrand[r.브랜드] ?? [];
-    arr.push(row);
-    brandSeasonByBrand[r.브랜드] = arr;
+
+    const arr = brandSeasonByBrand[row.브랜드] ?? [];
+    arr.push(formatted);
+    brandSeasonByBrand[row.브랜드] = arr;
   }
-  for (const k of Object.keys(brandSeasonByBrand)) {
-    brandSeasonByBrand[k].sort((a, b) =>
+
+  for (const brand of Object.keys(brandSeasonByBrand)) {
+    brandSeasonByBrand[brand].sort((a, b) =>
       String(a.시즌).localeCompare(String(b.시즌), "ko")
     );
   }

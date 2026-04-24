@@ -1,18 +1,17 @@
 import { google } from "googleapis";
 import { JWT } from "google-auth-library";
-import * as XLSX from "xlsx";
 import { BRAND_KEY_TO_SHEET_NAME } from "./constants";
 
-const SCOPES = [
-  "https://www.googleapis.com/auth/spreadsheets.readonly",
-  "https://www.googleapis.com/auth/drive.readonly",
-];
-
+const SCOPES = ["https://www.googleapis.com/auth/spreadsheets.readonly"];
 const SOURCE_CACHE_TTL_MS = 5 * 60 * 1000;
-const spreadsheetBytesCache = new Map<
-  string,
-  { expiresAt: number; value: Promise<Buffer | null> }
->();
+
+type CacheEntry<T> = {
+  expiresAt: number;
+  value: Promise<T>;
+};
+
+const titleCache = new Map<string, CacheEntry<string[]>>();
+const sheetRowsCache = new Map<string, CacheEntry<unknown[][]>>();
 
 function getJwt(): JWT {
   const raw = process.env.GOOGLE_SERVICE_ACCOUNT_JSON;
@@ -30,98 +29,114 @@ function getJwt(): JWT {
   });
 }
 
-/** Drive export → xlsx bytes; 실패 시 Sheets API로 워크북 생성 후 xlsx 버퍼 반환 */
-export async function fetchSpreadsheetXlsxBytes(sheetId: string): Promise<Buffer | null> {
-  if (!sheetId) return null;
-  const auth = getJwt();
-  const drive = google.drive({ version: "v3", auth });
-  try {
-    const res = await drive.files.export(
-      {
-        fileId: sheetId,
-        mimeType:
-          "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-      },
-      { responseType: "arraybuffer" }
-    );
-    return Buffer.from(res.data as ArrayBuffer);
-  } catch {
-    return fetchSpreadsheetViaSheetsApi(sheetId, auth);
-  }
+function escapeSheetName(sheetName: string) {
+  return `'${sheetName.replace(/'/g, "''")}'`;
 }
 
-function getCachedSpreadsheetXlsxBytes(sheetId: string): Promise<Buffer | null> {
-  if (!sheetId) return Promise.resolve(null);
+async function fetchSpreadsheetTitles(spreadsheetId: string): Promise<string[]> {
+  const sheets = google.sheets({ version: "v4", auth: getJwt() });
+  const meta = await sheets.spreadsheets.get({ spreadsheetId });
+  return (meta.data.sheets ?? [])
+    .map((sheet) => sheet.properties?.title ?? "")
+    .filter(Boolean);
+}
 
+async function fetchSheetRows(
+  spreadsheetId: string,
+  sheetName: string
+): Promise<unknown[][]> {
+  const sheets = google.sheets({ version: "v4", auth: getJwt() });
+  const res = await sheets.spreadsheets.values.get({
+    spreadsheetId,
+    range: escapeSheetName(sheetName),
+    valueRenderOption: "UNFORMATTED_VALUE",
+    dateTimeRenderOption: "SERIAL_NUMBER",
+  });
+  return (res.data.values ?? []) as unknown[][];
+}
+
+function getCached<T>(
+  cache: Map<string, CacheEntry<T>>,
+  key: string,
+  loader: () => Promise<T>
+): Promise<T> {
   const now = Date.now();
-  const cached = spreadsheetBytesCache.get(sheetId);
+  const cached = cache.get(key);
   if (cached && cached.expiresAt > now) {
     return cached.value;
   }
 
-  const value = fetchSpreadsheetXlsxBytes(sheetId).catch((error) => {
-    spreadsheetBytesCache.delete(sheetId);
+  const value = loader().catch((error) => {
+    cache.delete(key);
     throw error;
   });
-  spreadsheetBytesCache.set(sheetId, {
+  cache.set(key, {
     expiresAt: now + SOURCE_CACHE_TTL_MS,
     value,
   });
   return value;
 }
 
-async function fetchSpreadsheetViaSheetsApi(
-  sheetId: string,
-  auth: JWT
-): Promise<Buffer | null> {
-  try {
-    const sheets = google.sheets({ version: "v4", auth });
-    const meta = await sheets.spreadsheets.get({ spreadsheetId: sheetId });
-    const sheetTabs = meta.data.sheets ?? [];
-    const wb = XLSX.utils.book_new();
-    for (let idx = 0; idx < sheetTabs.length; idx++) {
-      const title = sheetTabs[idx]?.properties?.title ?? `Sheet${idx + 1}`;
-      const safeTitle = title.replace(/'/g, "''");
-      const range = `'${safeTitle}'`;
-      let rows: unknown[][] = [];
-      try {
-        const got = await sheets.spreadsheets.values.get({
-          spreadsheetId: sheetId,
-          range,
-        });
-        rows = (got.data.values ?? []) as unknown[][];
-      } catch {
-        rows = [];
-      }
-      const ws = XLSX.utils.aoa_to_sheet(rows);
-      const sheetName = title.slice(0, 31) || `Sheet${idx + 1}`;
-      XLSX.utils.book_append_sheet(wb, ws, sheetName);
-    }
-    const out = XLSX.write(wb, { type: "buffer", bookType: "xlsx" }) as Buffer;
-    return out;
-  } catch {
-    return null;
-  }
+function pickDefaultBaseSheetName(sheetNames: string[]): string | null {
+  if (!sheetNames.length) return null;
+  const visible = sheetNames.filter((name) => !String(name).startsWith("_"));
+  return visible[0] ?? sheetNames[sheetNames.length - 1] ?? null;
+}
+
+async function getSpreadsheetTitlesCached(spreadsheetId: string) {
+  return getCached(titleCache, spreadsheetId, () =>
+    fetchSpreadsheetTitles(spreadsheetId)
+  );
+}
+
+async function getSheetRowsCached(spreadsheetId: string, sheetName: string) {
+  return getCached(sheetRowsCache, `${spreadsheetId}::${sheetName}`, () =>
+    fetchSheetRows(spreadsheetId, sheetName)
+  );
 }
 
 export type SourceBundle = {
-  inout: Buffer | null;
-  onlineByBrand: Record<string, Buffer | null>;
+  baseDefaultRows: unknown[][];
+  baseInoutRows: unknown[][];
+  onlineByBrandRows: Record<string, unknown[][]>;
 };
 
 export async function getAllSources(
   baseSpreadsheetId: string,
   onlineSpreadsheetId: string
 ): Promise<SourceBundle> {
-  const [inout, onlineBytes] = await Promise.all([
-    getCachedSpreadsheetXlsxBytes(baseSpreadsheetId),
+  const baseSheetNames = baseSpreadsheetId
+    ? await getSpreadsheetTitlesCached(baseSpreadsheetId)
+    : [];
+  const baseDefaultSheetName = pickDefaultBaseSheetName(baseSheetNames);
+
+  const [baseDefaultRows, baseInoutRows, onlineEntries] = await Promise.all([
+    baseSpreadsheetId && baseDefaultSheetName
+      ? getSheetRowsCached(baseSpreadsheetId, baseDefaultSheetName)
+      : Promise.resolve([]),
+    baseSpreadsheetId
+      ? getSheetRowsCached(baseSpreadsheetId, "물류입고스타일수")
+      : Promise.resolve([]),
     onlineSpreadsheetId
-      ? getCachedSpreadsheetXlsxBytes(onlineSpreadsheetId)
-      : Promise.resolve(null),
+      ? Promise.all(
+          Object.entries(BRAND_KEY_TO_SHEET_NAME).map(
+            async ([key, sheetName]): Promise<[string, unknown[][]]> => [
+              key,
+              await getSheetRowsCached(onlineSpreadsheetId, sheetName),
+            ]
+          )
+        )
+      : Promise.resolve([] as [string, unknown[][]][]),
   ]);
-  const onlineByBrand: Record<string, Buffer | null> = {};
-  for (const key of Object.keys(BRAND_KEY_TO_SHEET_NAME)) {
-    onlineByBrand[key] = onlineBytes;
+
+  const onlineByBrandRows: Record<string, unknown[][]> = {};
+  for (const [key, rows] of onlineEntries) {
+    onlineByBrandRows[key] = rows;
   }
-  return { inout, onlineByBrand };
+
+  return {
+    baseDefaultRows,
+    baseInoutRows,
+    onlineByBrandRows,
+  };
 }
