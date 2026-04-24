@@ -1,10 +1,5 @@
-import {
-  ALL_BRANDS_LABEL,
-  ALL_BRANDS_VALUE,
-  BRANDS_LIST_UI,
-  SEASON_OPTIONS,
-} from "@/lib/constants";
 import type { DashboardPayload } from "@/lib/pipeline";
+import { DashboardFilters } from "./DashboardFilters";
 import { InoutTable } from "./InoutTable";
 import { LogoutButton } from "./LogoutButton";
 import { MonitorTable } from "./MonitorTable";
@@ -42,47 +37,10 @@ export function DashboardLayout({
           <div className="title-pill">온라인 리드타임 대시보드</div>
           <div className="update-time">업데이트시간 {timeStr}</div>
         </div>
-        <form className="filters" method="get" action="/">
-          <div>
-            <label>연도</label>
-            <div style={{ fontWeight: 600, padding: "0.35rem 0" }}>2026년</div>
-          </div>
-          <div>
-            <label>시즌</label>
-            <div className="season-grid">
-              {SEASON_OPTIONS.map((s) => (
-                <label key={s}>
-                  <input
-                    type="checkbox"
-                    name="seasons"
-                    value={s}
-                    defaultChecked={selectedSeasons.includes(s)}
-                  />
-                  {s}
-                </label>
-              ))}
-            </div>
-          </div>
-          <div>
-            <label htmlFor="brand">브랜드</label>
-            <select id="brand" name="brand" defaultValue={selectedBrand}>
-              <option value={ALL_BRANDS_VALUE}>{ALL_BRANDS_LABEL}</option>
-              {BRANDS_LIST_UI.map((b) => (
-                <option key={b} value={b}>
-                  {b}
-                </option>
-              ))}
-            </select>
-          </div>
-          <div>
-            <label className="sr-only" htmlFor="apply">
-              적용
-            </label>
-            <button id="apply" type="submit">
-              필터 적용
-            </button>
-          </div>
-        </form>
+        <DashboardFilters
+          selectedSeasons={selectedSeasons}
+          selectedBrand={selectedBrand}
+        />
       </div>
 
       <div className="kpi-row">
