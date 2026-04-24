@@ -466,7 +466,7 @@ export function buildStyleTableAll(sources: SourceBundle): {
     const style = String(record[styleCol] ?? "").trim();
     if (!style) continue;
 
-    const brand = String(record[brandCol] ?? "").trim();
+    const brand = String(record["브랜드"] ?? record[brandCol] ?? "").trim();
     const season = seasonCol ? record[seasonCol] : "";
     let inDateOk = false;
     if (firstInCol && firstInCol in record) {
@@ -607,7 +607,7 @@ export function buildInoutAggregates(inoutRowsSource: unknown[][]): {
   for (const record of base.records) {
     const style = String(record[styleCol] ?? "").trim();
     if (!style) continue;
-    const brand = String(record[brandCol] ?? "").trim();
+    const brand = String(record["브랜드"] ?? record[brandCol] ?? "").trim();
     const season = seasonCol ? String(record[seasonCol] ?? "").trim() : "";
 
     let inDateOk = false;
