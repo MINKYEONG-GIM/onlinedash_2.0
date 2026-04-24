@@ -30,6 +30,18 @@ type RegisterContext = {
   dataRows: unknown[][];
 };
 
+const RAW_BRAND_CODE_TO_NAME: Record<string, string> = {
+  SP: "스파오",
+  NB: "뉴발란스",
+  NK: "뉴발란스키즈",
+  WH: "후아유",
+  HP: "슈펜",
+  MI: "미쏘",
+  RM: "로엠",
+  CV: "클라비스",
+  EB: "에블린",
+};
+
 const baseTableCache = new WeakMap<unknown[][], BaseTable>();
 const registerDfCache = new WeakMap<unknown[][], RegisterRow[]>();
 const registerContextCache = new WeakMap<unknown[][], RegisterContext | null>();
@@ -102,18 +114,19 @@ function loadBaseTable(rows: unknown[][]): BaseTable {
   );
   const styleCol = findCol(["스타일코드", "스타일"], columns);
   const rawBrandCol = findCol(["브랜드(Now:단품)", "브랜드"], columns);
-  if (styleCol) {
-    for (const record of records) {
-      const style = String(record[styleCol] ?? "")
-        .trim()
-        .toLowerCase()
-        .slice(0, 2);
-      const mappedBrand = STYLE_PREFIX_TO_BRAND[style];
-      if (mappedBrand) {
-        record["브랜드"] = mappedBrand;
-      } else if (!record["브랜드"] && rawBrandCol) {
-        record["브랜드"] = record[rawBrandCol] ?? "";
-      }
+  for (const record of records) {
+    const stylePrefix = styleCol
+      ? String(record[styleCol] ?? "").trim().toLowerCase().slice(0, 2)
+      : "";
+    const brandFromStyle = STYLE_PREFIX_TO_BRAND[stylePrefix];
+    const rawBrand = rawBrandCol ? String(record[rawBrandCol] ?? "").trim().toUpperCase() : "";
+    const brandFromRaw = RAW_BRAND_CODE_TO_NAME[rawBrand];
+    if (brandFromStyle) {
+      record["브랜드"] = brandFromStyle;
+    } else if (brandFromRaw) {
+      record["브랜드"] = brandFromRaw;
+    } else if (rawBrandCol) {
+      record["브랜드"] = record[rawBrandCol] ?? "";
     }
   }
 
