@@ -86,6 +86,18 @@ function findColNormalized(keys: string[], cols: string[]): string | null {
 }
 
 function findSaleAmountCol(cols: string[]): string | null {
+  for (const col of cols) {
+    const normalized = norm(col);
+    if (normalized.includes("누적판매액") && normalized.includes("외형매출")) {
+      return col;
+    }
+  }
+  for (const col of cols) {
+    const normalized = norm(col);
+    if (normalized.includes("판매액") && !normalized.includes("판매량")) {
+      return col;
+    }
+  }
   return findColNormalized([...SALE_AMOUNT_HEADERS], cols);
 }
 
