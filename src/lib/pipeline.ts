@@ -66,6 +66,16 @@ function findCol(keys: string[], cols: string[]): string | null {
   return null;
 }
 
+function findColNormalized(keys: string[], cols: string[]): string | null {
+  for (const k of keys) {
+    const nk = norm(k);
+    for (const c of cols) {
+      if (norm(c) === nk) return c;
+    }
+  }
+  return findCol(keys, cols);
+}
+
 function aoaToObjects(
   rows: unknown[][],
   headerRow: number
@@ -585,7 +595,7 @@ export function buildInoutAggregates(inoutRowsSource: unknown[][]): {
   const orderAmtCol = findCol(["발주액"], base.columns);
   const inAmtCol = findCol(["누적입고액", "입고액"], base.columns);
   const outAmtCol = findCol(["출고액"], base.columns);
-  const saleAmtCol = findCol(
+  const saleAmtCol = findColNormalized(
     ["누적 판매액[외형매출]", "누적판매액", "판매액"],
     base.columns
   );
@@ -819,7 +829,7 @@ export function computeDashboard(
 
   const inAmtCol = findCol(["누적입고액", "입고액"], kpiBase.columns);
   const outAmtCol = findCol(["출고액"], kpiBase.columns);
-  const saleAmtCol = findCol(
+  const saleAmtCol = findColNormalized(
     ["누적 판매액[외형매출]", "누적판매액", "판매액"],
     kpiBase.columns
   );
