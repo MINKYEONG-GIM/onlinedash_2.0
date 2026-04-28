@@ -51,6 +51,17 @@ const SALE_AMOUNT_HEADERS = [
   "판매액",
 ] as const;
 
+const STYLE_CODE_SEASON_INDEX_BY_BRAND: Record<string, number> = {
+  뉴발란스: 5,
+  뉴발란스키즈: 5,
+  에블린: 5,
+  클라비스: 5,
+  로엠: 5,
+  스파오: 5,
+  슈펜: 6,
+  미쏘: 6,
+};
+
 const baseTableCache = new WeakMap<unknown[][], BaseTable>();
 const registerDfCache = new WeakMap<unknown[][], RegisterRow[]>();
 const registerContextCache = new WeakMap<unknown[][], RegisterContext | null>();
@@ -264,6 +275,27 @@ function regdateCellFilled(v: unknown): boolean {
   return true;
 }
 
+function seasonFromStyleCodeByBrand(
+  brandName: string,
+  styleCode: unknown
+): string {
+  const style = String(styleCode ?? "").trim();
+  const index = STYLE_CODE_SEASON_INDEX_BY_BRAND[brandName];
+  if (index === undefined) return "";
+  const seasonDigit = style[index] ?? "";
+  return seasonDigit === "1" || seasonDigit === "2" ? seasonDigit : "";
+}
+
+function getRegisterSeasonForBrand(
+  brandName: string,
+  styleCode: unknown,
+  seasonValue: unknown
+): string {
+  const parsed = seasonFromStyleCodeByBrand(brandName, styleCode);
+  if (parsed) return parsed;
+  return String(seasonValue ?? "").trim();
+}
+
 function loadBrandRegisterRows(rows: unknown[][]): RegisterRow[] {
   const cached = registerDfCache.get(rows);
   if (cached) return cached;
@@ -375,7 +407,10 @@ export function countRegisteredStylesFromRegisterSheet(
     new Set(selectedSeasons).size !== new Set(seasonOptions).size
   ) {
     filtered = filtered.filter((row) =>
-      seasonMatchesCell(row.시즌, selectedSeasons)
+      seasonMatchesCell(
+        getRegisterSeasonForBrand(brandName, row.스타일코드, row.시즌),
+        selectedSeasons
+      )
     );
   }
   return new Set(filtered.map((row) => norm(row.스타일코드))).size;
@@ -401,6 +436,7 @@ function diffCalendarDays(start: Date, end: Date): number {
 }
 
 export function loadBrandRegisterAvgDays(
+  brandName: string,
   regRows: unknown[][],
   baseDefaultRows: unknown[][],
   selectedSeasonsTuple: string[] | null
@@ -421,12 +457,17 @@ export function loadBrandRegisterAvgDays(
   if (styleCol === null || regdateCol === null) return null;
 
   let rows = dataRows;
-  if (selectedSeasonsTuple?.length && seasonCol !== null) {
+  if (selectedSeasonsTuple?.length) {
     const normSel = selectedSeasonsTuple.map((x) => normSeason(x)).filter(Boolean);
     if (normSel.length) {
       rows = rows.filter((line) => {
-        const raw = String(line?.[seasonCol] ?? "").trim().toUpperCase();
-        const ns = normSeason(line?.[seasonCol]);
+        const seasonValue = getRegisterSeasonForBrand(
+          brandName,
+          line?.[styleCol],
+          seasonCol !== null ? line?.[seasonCol] : ""
+        );
+        const raw = String(seasonValue).trim().toUpperCase();
+        const ns = normSeason(seasonValue);
         if (!normSel.includes(ns)) return false;
         return normSel.some((s) => new RegExp(`^G?${s}$`).test(raw));
       });
@@ -1047,6 +1088,7 @@ export function computeDashboard(
     if (!noReg && BRAND_TO_KEY[brand]) {
       const brandKey = BRAND_TO_KEY[brand];
       const avg = loadBrandRegisterAvgDays(
+        brand,
         sources.onlineByBrandRows[brandKey] ?? [],
         sources.baseDefaultRows,
         seasonTuple
