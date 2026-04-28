@@ -439,11 +439,11 @@ function diffCalendarDays(start: Date, end: Date): number {
 export function loadBrandRegisterAvgDays(
   brandName: string,
   regRows: unknown[][],
-  baseDefaultRows: unknown[][],
+  baseInoutRows: unknown[][],
   selectedSeasonsTuple: string[] | null
 ): Record<string, number | null> | null {
   if (!regRows.length) return null;
-  const baseMap = baseStyleToFirstInMap(baseDefaultRows);
+  const baseMap = baseStyleToFirstInMap(baseInoutRows);
   if (!baseMap.size) return null;
 
   const context = getRegisterContext(regRows);
@@ -536,7 +536,7 @@ export function loadBrandRegisterAvgDays(
     if (!baseDt) continue;
 
     const totalDiff = diffCalendarDays(baseDt, regDt);
-    if (totalDiff >= 0) totalDiffs.push(totalDiff);
+    totalDiffs.push(Math.max(0, totalDiff));
   }
 
   for (const row of parsedRows) {
@@ -904,9 +904,6 @@ export type MonitorRow = {
   온라인등록스타일수: number;
   온라인등록율: number;
   _등록율: string;
-  포토인계소요일수: string;
-  포토소요일수: string;
-  상품등록소요일수: string;
   평균전체등록소요일수: string;
   noReg: boolean;
 };
@@ -1117,9 +1114,6 @@ export function computeDashboard(
       온라인등록스타일수: onlineCount,
       온라인등록율: rate,
       _등록율: rateText,
-      포토인계소요일수: "-",
-      포토소요일수: "-",
-      상품등록소요일수: "-",
       평균전체등록소요일수: "-",
       noReg,
     };
@@ -1129,7 +1123,7 @@ export function computeDashboard(
       const avg = loadBrandRegisterAvgDays(
         brand,
         sources.onlineByBrandRows[brandKey] ?? [],
-        sources.baseDefaultRows,
+        sources.baseInoutRows,
         seasonTuple
       );
       if (avg) {
@@ -1140,9 +1134,6 @@ export function computeDashboard(
           }
         };
         setIf("평균전체등록소요일수", "평균전체등록소요일수");
-        setIf("포토인계소요일수", "포토인계소요일수");
-        setIf("포토소요일수", "포토소요일수");
-        setIf("상품등록소요일수", "상품등록소요일수");
       }
     }
 

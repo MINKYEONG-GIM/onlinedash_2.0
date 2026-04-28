@@ -61,10 +61,7 @@ export function MonitorTable({ rows }: { rows: MonitorRow[] }) {
             <th className="col-emphasis" title="온라인등록 스타일수 / 물류입고 입고스타일수">
               온라인등록율
             </th>
-            <th className="col-small">포토인계<br />소요일수</th>
-            <th className="col-small">포토<br />소요일수</th>
-            <th className="col-small">상품등록<br />소요일수</th>
-            <th className="col-emphasis">평균전체등록<br />소요일수</th>
+            <th className="col-emphasis">온라인등록<br />소요일수</th>
           </tr>
         </thead>
         <tbody>
@@ -78,9 +75,6 @@ export function MonitorTable({ rows }: { rows: MonitorRow[] }) {
               <td className="col-emphasis">
                 {rateCell(r.온라인등록율, r._등록율, r.noReg)}
               </td>
-              <td className="col-small">{r.noReg ? "-" : r.포토인계소요일수}</td>
-              <td className="col-small">{r.noReg ? "-" : r.포토소요일수}</td>
-              <td className="col-small">{r.noReg ? "-" : r.상품등록소요일수}</td>
               <td className="col-emphasis">
                 {avgCell(r.평균전체등록소요일수, r.noReg)}
               </td>
