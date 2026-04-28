@@ -58,6 +58,7 @@ const STYLE_CODE_SEASON_INDEX_BY_BRAND: Record<string, number> = {
   클라비스: 5,
   로엠: 5,
   스파오: 5,
+  후아유: 5,
   슈펜: 6,
   미쏘: 6,
 };
