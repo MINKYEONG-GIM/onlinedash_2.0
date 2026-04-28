@@ -283,8 +283,8 @@ function seasonFromStyleCodeByBrand(
   const style = String(styleCode ?? "").trim();
   const index = STYLE_CODE_SEASON_INDEX_BY_BRAND[brandName];
   if (index === undefined) return "";
-  const seasonDigit = style[index] ?? "";
-  return seasonDigit === "1" || seasonDigit === "2" ? seasonDigit : "";
+  const seasonCode = String(style[index] ?? "").trim().toUpperCase();
+  return SEASON_OPTIONS.includes(seasonCode) ? seasonCode : "";
 }
 
 function getRegisterSeasonForBrand(
