@@ -455,9 +455,15 @@ export function loadBrandRegisterAvgDays(
   const seasonCol = colIdx(headerNorm, "시즌");
   const photoHandoverCol = colIdx(headerNorm, "포토인계일");
   const retouchDoneCol = colIdx(headerNorm, "리터칭완료일");
+  const excludeCol = colIdx(headerNorm, "제외");
   if (styleCol === null || regdateCol === null) return null;
 
   let rows = dataRows;
+  if (excludeCol !== null) {
+    rows = rows.filter(
+      (line) => String(line?.[excludeCol] ?? "").trim() === "포함"
+    );
+  }
   if (selectedSeasonsTuple?.length) {
     const normSel = selectedSeasonsTuple.map((x) => normSeason(x)).filter(Boolean);
     if (normSel.length) {
@@ -476,13 +482,45 @@ export function loadBrandRegisterAvgDays(
   }
   if (!rows.length) return null;
 
-  const parsedRows = rows.map((line) => ({
-    style: norm(line?.[styleCol]),
-    regDt: parseDateSeriesVal(line?.[regdateCol]),
-    photoDt:
-      photoHandoverCol !== null ? parseDateSeriesVal(line?.[photoHandoverCol]) : null,
-    retouchDt:
-      retouchDoneCol !== null ? parseDateSeriesVal(line?.[retouchDoneCol]) : null,
+  const byStyle = new Map<
+    string,
+    { regDt: Date | null; photoDt: Date | null; retouchDt: Date | null }
+  >();
+  const pickEarlier = (prev: Date | null, next: Date | null) => {
+    if (!prev) return next;
+    if (!next) return prev;
+    return next < prev ? next : prev;
+  };
+
+  for (const line of rows) {
+    const style = norm(line?.[styleCol]);
+    if (!style) continue;
+
+    const regDt = parseDateSeriesVal(line?.[regdateCol]);
+    if (!regDt) continue;
+
+    const photoDt =
+      photoHandoverCol !== null ? parseDateSeriesVal(line?.[photoHandoverCol]) : null;
+    const retouchDt =
+      retouchDoneCol !== null ? parseDateSeriesVal(line?.[retouchDoneCol]) : null;
+
+    const prev = byStyle.get(style) ?? {
+      regDt: null,
+      photoDt: null,
+      retouchDt: null,
+    };
+    byStyle.set(style, {
+      regDt: pickEarlier(prev.regDt, regDt),
+      photoDt: pickEarlier(prev.photoDt, photoDt),
+      retouchDt: pickEarlier(prev.retouchDt, retouchDt),
+    });
+  }
+
+  const parsedRows = Array.from(byStyle.entries()).map(([style, dates]) => ({
+    style,
+    regDt: dates.regDt,
+    photoDt: dates.photoDt,
+    retouchDt: dates.retouchDt,
   }));
 
   const totalDiffs: number[] = [];
